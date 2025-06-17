@@ -731,99 +731,141 @@ custom_css = """
 
 /* ===== DYNAMIC STATUS INSTRUCTIONS PANEL ===== */
 .status-instructions-panel {
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 50%, #f1f5f9 100%);
-    border: 2px solid var(--primary-color);
-    border-radius: 16px;
-    padding: 24px 32px;
-    margin: 24px 0;
-    text-align: left;
-    box-shadow: 0 8px 32px rgba(249, 115, 22, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 24px;
+    margin: 20px 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
 }
 
-.status-instructions-panel::before {
+/* Workflow stages layout */
+.workflow-stages {
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+}
+
+.stage {
+    flex: 1;
+    padding: 20px;
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background: rgba(248, 250, 252, 0.6);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    opacity: 0.5;
+}
+
+.stage::before {
     content: '';
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     height: 4px;
-    background: var(--primary-gradient);
-    border-radius: 16px 16px 0 0;
-}
-
-.status-instructions-panel:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 12px 40px rgba(249, 115, 22, 0.16), 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-.status-instructions-panel.uploading {
-    border-color: var(--primary-color);
-    background: linear-gradient(135deg, #ffffff 0%, rgba(249, 115, 22, 0.05) 50%, rgba(251, 146, 60, 0.03) 100%);
-    box-shadow: 0 8px 32px rgba(249, 115, 22, 0.15), 0 2px 8px rgba(0, 0, 0, 0.05);
-}
-
-.status-instructions-panel.generating {
-    border-color: var(--primary-color);
-    background: linear-gradient(135deg, #ffffff 0%, rgba(249, 115, 22, 0.05) 50%, rgba(251, 146, 60, 0.03) 100%);
-    animation: pulse-generating 2s infinite;
-    box-shadow: 0 8px 32px rgba(249, 115, 22, 0.15), 0 2px 8px rgba(0, 0, 0, 0.05);
-}
-
-.status-instructions-panel.generating::before {
     background: linear-gradient(90deg, #f97316 0%, #fb923c 100%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
 }
 
-@keyframes pulse-generating {
-    0%, 100% {
-        box-shadow: 0 8px 32px rgba(249, 115, 22, 0.15), 0 2px 8px rgba(0, 0, 0, 0.05);
-        transform: scale(1);
-    }
-    50% {
-        box-shadow: 0 12px 40px rgba(249, 115, 22, 0.2), 0 4px 12px rgba(0, 0, 0, 0.08);
-        transform: scale(1.005);
-    }
+.stage.active {
+    background: linear-gradient(135deg, #fff7ed 0%, #fed7aa 100%);
+    border-color: #f97316;
+    opacity: 1;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(249, 115, 22, 0.15);
 }
 
-/* Status panel content styling */
-.status-instructions-content {
+.stage.active::before {
+    opacity: 1;
+}
+
+.stage.active .stage-icon {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+.stage-header {
     display: flex;
-    align-items: flex-start;
-    gap: 20px;
-    position: relative;
-    z-index: 1;
+    align-items: center;
+    margin-bottom: 12px;
 }
 
-.status-instructions-icon {
-    font-size: 2.5rem;
-    line-height: 1;
-    flex-shrink: 0;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+.stage-number {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-right: 12px;
+    transition: all 0.3s ease;
 }
 
-.status-instructions-text {
-    flex: 1;
-    min-width: 0;
+.stage.active .stage-number {
+    background: #f97316;
+    color: white;
+    box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
 }
 
-.status-instructions-title {
+.stage-icon {
     font-size: 1.5rem;
-    font-weight: 700;
-    color: #1e293b;
-    margin-bottom: 8px;
-    line-height: 1.3;
-    letter-spacing: -0.025em;
+    margin-right: 8px;
+    transition: transform 0.3s ease;
 }
 
-.status-instructions-subtitle {
-    font-size: 1.1rem;
-    color: #475569;
-    line-height: 1.5;
-    margin-bottom: 0;
-    font-weight: 500;
+.stage-title {
+    font-weight: 600;
+    color: #1e293b;
+    font-size: 1rem;
+    margin: 0;
 }
+
+.stage.active .stage-title {
+    color: #1e293b;
+    font-weight: 700;
+}
+
+.stage-description {
+    color: #64748b;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    margin-top: 8px;
+}
+
+.stage.active .stage-description {
+    color: #374151;
+    font-weight: 600;
+}
+
+/* Responsive design for workflow stages */
+@media (max-width: 768px) {
+    .workflow-stages {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .stage {
+        padding: 16px;
+    }
+
+    .status-instructions-panel {
+        padding: 16px;
+    }
+}
+
+
 
 /* ===== RESPONSIVE DESIGN ===== */
 @media (max-width: 768px) {
@@ -1082,6 +1124,8 @@ div[data-testid="accordion"] .label-wrap span {
 .gradio-accordion .accordion-content,
 .gradio-accordion [data-testid="accordion-content"] {
     color: var(--text-muted) !important;
+    font-family: 'Microsoft Sans Serif', sans-serif !important;
+    font-size: 11pt !important;
 }
 
 .gradio-accordion .accordion-content p,
@@ -1089,6 +1133,8 @@ div[data-testid="accordion"] .label-wrap span {
 .gradio-accordion .accordion-content div,
 .gradio-accordion [data-testid="accordion-content"] div {
     color: var(--text-muted) !important;
+    font-family: 'Microsoft Sans Serif', sans-serif !important;
+    font-size: 11pt !important;
 }
 
 /* Key Messages Accordion Styling */
@@ -1100,6 +1146,13 @@ div[data-testid="accordion"] .label-wrap span {
     background: var(--bg-secondary) !important;
     border: 1px solid var(--border-secondary) !important;
     box-shadow: var(--shadow-sm) !important;
+}
+
+/* Generate Button Section Styling */
+.generate-button-section {
+    margin-top: 16px !important;
+    margin-bottom: 16px !important;
+    text-align: center;
 }
 
 /* ===== FILE UPLOAD & DROP ZONE COMPONENTS ===== */
@@ -1314,8 +1367,8 @@ div[data-testid="accordion"] .label-wrap span {
 .draft-content {
     line-height: 1.6;
     color: var(--text-color);
-    font-size: 0.9rem;
-    font-family: Calibri, Arial, sans-serif;
+    font-size: 11pt;
+    font-family: 'Microsoft Sans Serif', sans-serif;
 }
 
 .draft-content p {
@@ -1509,6 +1562,18 @@ div[data-testid="accordion"] .label-wrap span {
     margin-bottom: 0 !important;
 }
 
+/* Remove margin from actions section to prevent gaps when hidden */
+.rhs-controls-column .actions-section {
+    margin-bottom: 0 !important;
+}
+
+/* Ensure clean layout when hidden elements don't create gaps */
+.rhs-controls-column .gradio-group[style*="display: none"],
+.rhs-controls-column .gradio-group[style*="visibility: hidden"] {
+    margin-bottom: 0 !important;
+    margin-top: 0 !important;
+}
+
 /* Section transition animations */
 .section-transition {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
@@ -1520,7 +1585,9 @@ div[data-testid="accordion"] .label-wrap span {
 
 
 /* Action buttons styling - matching Generate Reply button with royal blue theme */
-.action-button {
+.action-button,
+button.action-button,
+.gradio-button.action-button {
     background: var(--accent-gradient) !important;
     border: none !important;
     color: var(--text-inverse) !important;
@@ -1528,16 +1595,23 @@ div[data-testid="accordion"] .label-wrap span {
     font-size: 1rem !important;
     font-weight: 600 !important;
     border-radius: var(--radius-lg) !important;
-    margin: 8px 0 !important;
+    margin: 0 !important;
     min-width: 160px !important;
     transition: var(--transition-slow) !important;
     box-shadow: var(--shadow-sm) !important;
+    /* Override any parent container backgrounds */
+    position: relative !important;
+    z-index: 10 !important;
 }
 
-.action-button:hover {
+.action-button:hover,
+button.action-button:hover,
+.gradio-button.action-button:hover {
     background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent-light) 100%) !important;
     transform: translateY(-2px) !important;
     box-shadow: var(--shadow-lg) !important;
+    border: none !important;
+    color: var(--text-inverse) !important;
 }
 
 /* Widescreen layout optimizations for 2-column design */
@@ -1583,24 +1657,26 @@ div[data-testid="accordion"] .label-wrap span {
 }
 
 /* ===== BUTTON COMPONENTS ===== */
-.action-button {
+/* Override Gradio's primary button styling for action buttons */
+.primary.action-button,
+button.primary.action-button {
     background: var(--accent-gradient) !important;
-    color: var(--text-inverse) !important;
     border: none !important;
-    border-radius: var(--radius-lg) !important;
-    font-weight: 600 !important;
-    transition: var(--transition-slow) !important;
+    color: var(--text-inverse) !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 
-.action-button:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: var(--shadow-lg) !important;
+.primary.action-button:hover,
+button.primary.action-button:hover {
     background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent-light) 100%) !important;
+    border: none !important;
+    color: var(--text-inverse) !important;
+    box-shadow: var(--shadow-lg) !important;
 }
 
 /* ===== PERSONAL PREFERENCES ===== */
 .personal-preferences {
-    margin-top: 16px;
+    margin-top: 0;
     opacity: 0.95;
 }
 
@@ -2962,25 +3038,50 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
     # Banner temporarily hidden as requested
     # gr.HTML(banner_html)
 
-    # Dynamic Status Instructions Panel
-    status_instructions = gr.HTML(
-        value="""
+    # Dynamic Status Instructions Panel with 3-Stage Workflow
+    def get_workflow_banner_html(active_stage=1):
+        """Generate the 3-stage workflow banner HTML"""
+        return f"""
         <div class="status-instructions-panel">
-            <div class="status-instructions-content">
-                <div class="status-instructions-icon">📧</div>
-                <div class="status-instructions-text">
-                    <div class="status-instructions-title">Welcome to SARA Compose</div>
-                    <div class="status-instructions-subtitle">Upload an email file to get started with your AI-powered email assistant</div>
-                    <div style="margin-top: 16px; padding: 16px; background: rgba(249, 115, 22, 0.05); border-radius: 12px; border-left: 4px solid #f97316;">
-                        <div style="margin-bottom: 8px; font-weight: 600; color: #f97316; font-size: 1rem;">💡 Getting Started</div>
-                        <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Step 1: Upload a .msg email file using the section below</div>
-                        <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Step 2: Add your key messages and generate reply</div>
-                        <div style="color: #475569; font-size: 0.95rem;">• Step 3: Review and download your SARA-composed draft</div>
+            <div class="workflow-stages">
+                <div class="stage {'active' if active_stage == 1 else ''}">
+                    <div class="stage-header">
+                        <div class="stage-number">{'✓' if active_stage > 1 else '1'}</div>
+                        <div class="stage-icon">📧</div>
+                        <h3 class="stage-title">Upload Email</h3>
+                    </div>
+                    <div class="stage-description">
+                        Upload your email to get started
+                    </div>
+                </div>
+
+                <div class="stage {'active' if active_stage == 2 else ''}">
+                    <div class="stage-header">
+                        <div class="stage-number">2</div>
+                        <div class="stage-icon">✍️</div>
+                        <h3 class="stage-title">Add Key Messages</h3>
+                    </div>
+                    <div class="stage-description">
+                        Enter your key points and let SARA craft your reply
+                    </div>
+                </div>
+
+                <div class="stage {'active' if active_stage == 3 else ''}">
+                    <div class="stage-header">
+                        <div class="stage-number">3</div>
+                        <div class="stage-icon">📋</div>
+                        <h3 class="stage-title">Review & Download</h3>
+                    </div>
+                    <div class="stage-description">
+                        Review, download, or refine your draft with SARA
                     </div>
                 </div>
             </div>
         </div>
-        """,
+        """
+
+    status_instructions = gr.HTML(
+        value=get_workflow_banner_html(1),
         elem_id="status-instructions"
     )
 
@@ -3056,11 +3157,13 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                         max_lines=12
                     )
 
-                # Generate button with consistent action button styling - Hidden by default, becomes visible after email upload
+            # Generate button outside accordion - Hidden by default, becomes visible after email upload
+            with gr.Group(elem_classes=["generate-button-section"], visible=False) as generate_button_group:
                 generate_btn = gr.Button(
                     "🚀 Generate Reply",
                     interactive=True,
                     size="lg",
+                    variant="primary",
                     elem_classes=["action-button"]
                 )
 
@@ -3120,7 +3223,8 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                     restore_default_btn = gr.Button(
                         "🔄 Restore Default Instructions",
                         elem_classes=["action-button"],
-                        size="sm"
+                        size="sm",
+                        variant="primary"
                     )
 
                     # Hidden HTML component for visual feedback
@@ -3230,24 +3334,8 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
 
     def extract_and_display_email(file):
         if not file:
-            # Reset status instructions to initial state
-            initial_status_html = """
-            <div class="status-instructions-panel">
-                <div class="status-instructions-content">
-                    <div class="status-instructions-icon">📧</div>
-                    <div class="status-instructions-text">
-                        <div class="status-instructions-title">Welcome to SARA Compose</div>
-                        <div class="status-instructions-subtitle">Upload an email file to get started with your AI-powered email assistant</div>
-                        <div style="margin-top: 16px; padding: 16px; background: rgba(249, 115, 22, 0.05); border-radius: 12px; border-left: 4px solid #f97316;">
-                            <div style="margin-bottom: 8px; font-weight: 600; color: #f97316; font-size: 1rem;">💡 Getting Started</div>
-                            <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Step 1: Upload a .msg email file using the section below</div>
-                            <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Step 2: Add your key messages and generate reply</div>
-                            <div style="color: #475569; font-size: 0.95rem;">• Step 3: Review and download your SARA-composed draft</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            """
+            # Reset status instructions to initial state (Stage 1)
+            initial_status_html = get_workflow_banner_html(1)
 
             return (
                 gr.update(visible=True),  # Keep file input visible
@@ -3265,24 +3353,15 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                 gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
                 gr.update(open=False, visible=False),  # Keep key messages accordion closed and hidden
                 gr.update(visible=False),  # Hide entire key messages group container when no file
+                gr.update(visible=False),  # Hide generate button group when no file
                 {},
                 initial_status_html     # Reset status instructions
             )
 
         info, error = process_msg_file(file)
         if error:
-            # Error status instructions
-            error_status_html = """
-            <div class="status-instructions-panel">
-                <div class="status-instructions-content">
-                    <div class="status-instructions-icon">❌</div>
-                    <div class="status-instructions-text">
-                        <div class="status-instructions-title">Error Processing Email</div>
-                        <div class="status-instructions-subtitle">Please try uploading a different .msg file</div>
-                    </div>
-                </div>
-            </div>
-            """
+            # Error status - stay on Stage 1
+            error_status_html = get_workflow_banner_html(1)
 
             return (
                 gr.update(visible=True),  # Keep file input visible for retry
@@ -3300,28 +3379,13 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                 gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
                 gr.update(open=False, visible=False),  # Keep key messages accordion closed and hidden
                 gr.update(visible=False),  # Hide entire key messages group container on error
+                gr.update(visible=False),  # Hide generate button group on error
                 {},
                 error_status_html       # Show error status
             )
 
-        # Success status instructions
-        success_status_html = """
-        <div class="status-instructions-panel">
-            <div class="status-instructions-content">
-                <div class="status-instructions-icon">✅</div>
-                <div class="status-instructions-text">
-                    <div class="status-instructions-title">Email Loaded Successfully</div>
-                    <div class="status-instructions-subtitle">Enter your reply instructions below and click "Generate Reply" to create your response</div>
-                    <div style="margin-top: 16px; padding: 16px; background: rgba(249, 115, 22, 0.05); border-radius: 12px; border-left: 4px solid #f97316;">
-                        <div style="margin-bottom: 8px; font-weight: 600; color: #f97316; font-size: 1rem;">📝 Step 2: Add your key messages and generate reply</div>
-                        <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Review the original email content below</div>
-                        <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Add your key messages in the right panel</div>
-                        <div style="color: #475569; font-size: 0.95rem;">• Click "Generate Reply" to create your SARA-composed response</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """
+        # Success status - move to Stage 2
+        success_status_html = get_workflow_banner_html(2)
 
         preview_html = format_email_preview(info)
         # After successful email upload: display email content and hide upload section
@@ -3332,6 +3396,7 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
             gr.update(open=True, visible=True),    # Make original email accordion visible and open to show content
             gr.update(open=True, visible=True),    # Make key messages accordion visible and auto-expand
             gr.update(visible=True),    # Make entire key messages group container visible after successful upload
+            gr.update(visible=True),    # Make generate button group visible after successful upload
             info,
             success_status_html         # Show success status
         )
@@ -3417,18 +3482,8 @@ Key Messages to Include:
         try:
             print(f"on_generate_stream called with file: {type(file)} {file}")
             if not file:
-                # No file status instructions
-                no_file_status_html = """
-                <div class="status-instructions-panel">
-                    <div class="status-instructions-content">
-                        <div class="status-instructions-icon">📧</div>
-                        <div class="status-instructions-text">
-                            <div class="status-instructions-title">Upload Required</div>
-                            <div class="status-instructions-subtitle">Please upload a .msg email file to begin generating your response</div>
-                        </div>
-                    </div>
-                </div>
-                """
+                # No file - back to Stage 1
+                no_file_status_html = get_workflow_banner_html(1)
 
                 yield (
                     gr.update(visible=True),  # Keep file input visible
@@ -3455,6 +3510,7 @@ Key Messages to Include:
                     gr.update(open=False, visible=False),  # Close and hide original accordion
                     gr.update(open=False, visible=False),   # Close and hide key messages accordion
                     gr.update(visible=False),  # Hide entire key messages group container
+                    gr.update(visible=False),  # Hide generate button group
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -3465,18 +3521,8 @@ Key Messages to Include:
             # Check if POE API is healthy
             current_backend = backend_manager.get_current_backend()
             if not current_backend.is_healthy():
-                # API unavailable status instructions
-                api_unavailable_status_html = """
-                <div class="status-instructions-panel">
-                    <div class="status-instructions-content">
-                        <div class="status-instructions-icon">❌</div>
-                        <div class="status-instructions-text">
-                            <div class="status-instructions-title">Service Unavailable</div>
-                            <div class="status-instructions-subtitle">POE API service is currently unavailable. Please check your API key and connection</div>
-                        </div>
-                    </div>
-                </div>
-                """
+                # API unavailable - stay on Stage 2
+                api_unavailable_status_html = get_workflow_banner_html(2)
 
                 yield (
                     gr.update(visible=True),   # Keep file input visible for retry
@@ -3495,6 +3541,7 @@ Key Messages to Include:
                     gr.update(open=False, visible=False),  # Close and hide original accordion
                     gr.update(open=False, visible=False),   # Close and hide key messages accordion
                     gr.update(visible=False),  # Hide entire key messages group container
+                    gr.update(visible=False),  # Hide generate button group
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -3506,18 +3553,8 @@ Key Messages to Include:
             info, error = process_msg_file(file)
             print(f"process_msg_file returned info: {info}, error: {error}")
             if error:
-                # Processing error status instructions
-                processing_error_status_html = """
-                <div class="status-instructions-panel">
-                    <div class="status-instructions-content">
-                        <div class="status-instructions-icon">❌</div>
-                        <div class="status-instructions-text">
-                            <div class="status-instructions-title">File Processing Error</div>
-                            <div class="status-instructions-subtitle">Unable to process the uploaded file. Please try a different .msg email file</div>
-                        </div>
-                    </div>
-                </div>
-                """
+                # Processing error - back to Stage 1
+                processing_error_status_html = get_workflow_banner_html(1)
 
                 yield (
                     gr.update(visible=True),   # Keep file input visible for retry
@@ -3536,6 +3573,7 @@ Key Messages to Include:
                     gr.update(open=False, visible=False),  # Close and hide original accordion
                     gr.update(open=False, visible=False),   # Close and hide key messages accordion
                     gr.update(visible=False),  # Hide entire key messages group container
+                    gr.update(visible=False),  # Hide generate button group
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -3555,29 +3593,14 @@ Key Messages to Include:
             # Initial draft area - pure content placeholder, no status messages
             initial_draft_status = """
             <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #e5e7eb;'>
-                <div style='font-family: Calibri, Arial, sans-serif; line-height: 1.6; color: #9ca3af; text-align: center; padding: 40px 20px;'>
+                <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #9ca3af; text-align: center; padding: 40px 20px; font-size: 11pt;'>
                     <div style='font-size: 1.1em;'>Generating your email response...</div>
                 </div>
             </div>
             """
 
-            # Generation status instructions - all status information moved here
-            generating_status_html = """
-            <div class="status-instructions-panel generating">
-                <div class="status-instructions-content">
-                    <div class="status-instructions-icon">🤖</div>
-                    <div class="status-instructions-text">
-                        <div class="status-instructions-title">SARA is Composing Your Email</div>
-                        <div class="status-instructions-subtitle">Please wait while SARA analyzes the email and creates your personalized reply</div>
-                        <div style="margin-top: 16px; padding: 16px; background: rgba(249, 115, 22, 0.05); border-radius: 12px; border-left: 4px solid #f97316;">
-                            <div style="margin-bottom: 8px; font-weight: 600; color: #f97316; font-size: 1rem;">💭 AI Processing</div>
-                            <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Analyzing context and generating personalized response</div>
-                            <div style="color: #475569; font-size: 0.95rem;">• Considering your key messages and the original email context</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            """
+            # Generation status - stay on Stage 2 during generation
+            generating_status_html = get_workflow_banner_html(2)
 
             # After Generate Reply: make draft accordion visible and open to show streaming content
             yield (
@@ -3589,6 +3612,7 @@ Key Messages to Include:
                 gr.update(open=True, visible=True),  # Make original email accordion visible and open
                 gr.update(open=True, visible=True),  # Make key messages accordion visible and open
                 gr.update(visible=True),  # Make entire key messages group container visible
+                gr.update(visible=True),  # Keep generate button group visible
                 "",                             # Clear thinking content initially
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                             # Clear current_reply state
@@ -3609,7 +3633,7 @@ Key Messages to Include:
                         # Show actual streaming content in draft area - clean, no status headers
                         draft_content = f"""
                         <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 2px solid #f97316;'>
-                            <div style='font-family: Calibri, Arial, sans-serif; line-height: 1.6; color: #374151;'>
+                            <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #374151; font-size: 11pt;'>
                                 {format_reply_content(main_reply)}
                             </div>
                         </div>
@@ -3620,7 +3644,7 @@ Key Messages to Include:
                         # Still processing - show clean loading state
                         draft_content = """
                         <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #e5e7eb;'>
-                            <div style='font-family: Calibri, Arial, sans-serif; line-height: 1.6; color: #9ca3af; text-align: center; padding: 40px 20px;'>
+                            <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #9ca3af; text-align: center; padding: 40px 20px; font-size: 11pt;'>
                                 <div style='font-size: 1.1em;'>Processing your request...</div>
                             </div>
                         </div>
@@ -3634,23 +3658,8 @@ Key Messages to Include:
 
                     # Auto-scroll JavaScript removed for Hugging Face Spaces compatibility
 
-                    # Update status instructions during streaming - all status information here
-                    streaming_status_html = """
-                    <div class="status-instructions-panel generating">
-                        <div class="status-instructions-content">
-                            <div class="status-instructions-icon">✍️</div>
-                            <div class="status-instructions-text">
-                                <div class="status-instructions-title">Drafting Email (Live)</div>
-                                <div class="status-instructions-subtitle">Content is appearing in real-time as SARA composes your personalized reply</div>
-                                <div style="margin-top: 16px; padding: 16px; background: rgba(249, 115, 22, 0.05); border-radius: 12px; border-left: 4px solid #f97316;">
-                                    <div style="margin-bottom: 8px; font-weight: 600; color: #f97316; font-size: 1rem;">🔄 Live Generation</div>
-                                    <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Content appearing in real-time in the draft section</div>
-                                    <div style="color: #475569; font-size: 0.95rem;">• Still generating... Content will continue to appear</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    """
+                    # Update status instructions during streaming - stay on Stage 2
+                    streaming_status_html = get_workflow_banner_html(2)
 
                     # Stream to draft area, keep draft accordion open, show thinking if available
                     yield (
@@ -3662,6 +3671,7 @@ Key Messages to Include:
                         gr.update(open=True, visible=True), # Keep original email accordion visible and open
                         gr.update(open=True, visible=True), # Keep key messages accordion visible and open
                         gr.update(visible=True), # Keep entire key messages group container visible
+                        gr.update(visible=True), # Keep generate button group visible
                         think_display,                      # Show thinking content if available
                         gr.update(visible=False, value=None),  # Hide download file during generation
                         main_reply,                         # Update current_reply state
@@ -3675,7 +3685,7 @@ Key Messages to Include:
                     # Format the final draft for the draft preview area - pure content only
                     final_draft_content = f"""
                     <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 2px solid #f97316;'>
-                        <div style='font-family: Calibri, Arial, sans-serif; line-height: 1.6; color: #374151;'>
+                        <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #374151; font-size: 11pt;'>
                             {format_reply_content(main_reply)}
                         </div>
                     </div>
@@ -3688,24 +3698,8 @@ Key Messages to Include:
                     think_display = think_content if think_visible else ""
 
                     # Completion status instructions - all completion status moved here
-                    completion_status_html = """
-                    <div class="status-instructions-panel">
-                        <div class="status-instructions-content">
-                            <div class="status-instructions-icon">✅</div>
-                            <div class="status-instructions-text">
-                                <div class="status-instructions-title">Email Draft Complete!</div>
-                                <div class="status-instructions-subtitle">Your personalized email is ready for review. The draft content is displayed in the SARA Draft Response section below.</div>
-                                <div style="margin-top: 16px; padding: 16px; background: rgba(249, 115, 22, 0.05); border-radius: 12px; border-left: 4px solid #f97316;">
-                                    <div style="margin-bottom: 8px; font-weight: 600; color: #f97316; font-size: 1rem;">📧 Step 3: Final Steps</div>
-                                    <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Review the email content and formatting in the draft section</div>
-                                    <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• To revise: edit key messages and click "Generate Reply" again</div>
-                                    <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Download the .eml file using the button below</div>
-                                    <div style="color: #475569; font-size: 0.95rem;">• Use "Clear" to start over with a new email</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    """
+                    # Completion status - move to Stage 3
+                    completion_status_html = get_workflow_banner_html(3)
 
                     # Automatically generate download file when generation completes
                     download_file_update = generate_download_file(main_reply, info, user_email, user_name)
@@ -3720,6 +3714,7 @@ Key Messages to Include:
                         gr.update(open=True, visible=True), # Keep original email accordion visible and open
                         gr.update(open=True, visible=True), # Keep key messages accordion visible and open
                         gr.update(visible=True), # Keep entire key messages group container visible
+                        gr.update(visible=True), # Keep generate button group visible
                         think_display,                      # Show thinking content if available
                         download_file_update,               # Show download file
                         main_reply,                         # Update current_reply state
@@ -3735,30 +3730,14 @@ Key Messages to Include:
 
             error_draft = """
             <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #ef4444;'>
-                <div style='font-family: Calibri, Arial, sans-serif; line-height: 1.6; color: #dc2626; text-align: center; padding: 40px 20px;'>
+                <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #dc2626; text-align: center; padding: 40px 20px; font-size: 11pt;'>
                     <div style='font-size: 1.1em;'>Generation failed. Please try again.</div>
                 </div>
             </div>
             """
 
-            # Error status instructions - all error information moved here
-            error_generation_status_html = """
-            <div class="status-instructions-panel">
-                <div class="status-instructions-content">
-                    <div class="status-instructions-icon">❌</div>
-                    <div class="status-instructions-text">
-                        <div class="status-instructions-title">Generation Failed</div>
-                        <div class="status-instructions-subtitle">An error occurred during email generation. Please try again or check your settings</div>
-                        <div style="margin-top: 16px; padding: 16px; background: rgba(239, 68, 68, 0.05); border-radius: 12px; border-left: 4px solid #ef4444;">
-                            <div style="margin-bottom: 8px; font-weight: 600; color: #dc2626; font-size: 1rem;">🔧 Troubleshooting</div>
-                            <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Check your internet connection</div>
-                            <div style="margin-bottom: 6px; color: #475569; font-size: 0.95rem;">• Verify the email file is valid</div>
-                            <div style="color: #475569; font-size: 0.95rem;">• Try uploading the email again</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            """
+            # Error generation status - stay on Stage 2
+            error_generation_status_html = get_workflow_banner_html(2)
 
             yield (
                 gr.update(visible=True),            # Show file input for retry
@@ -3769,6 +3748,7 @@ Key Messages to Include:
                 gr.update(open=False, visible=False),  # Close and hide original accordion
                 gr.update(open=False, visible=False),  # Close and hide key messages accordion
                 gr.update(visible=False),  # Hide entire key messages group container
+                gr.update(visible=False),  # Hide generate button group
                 "",                                 # Clear thinking content
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                                 # Clear current_reply state
@@ -3777,7 +3757,7 @@ Key Messages to Include:
             )
 
     # Event handlers - Updated for new component order: Upload → Thinking → Draft → Original
-    file_input.change(extract_and_display_email, inputs=file_input, outputs=[file_input, original_email_display, upload_accordion, original_accordion, key_messages_accordion, key_messages_group, current_email_info, status_instructions])
+    file_input.change(extract_and_display_email, inputs=file_input, outputs=[file_input, original_email_display, upload_accordion, original_accordion, key_messages_accordion, key_messages_group, generate_button_group, current_email_info, status_instructions])
     file_input.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
     key_messages.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
     model_selector.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
@@ -3790,7 +3770,7 @@ Key Messages to Include:
     # AI instructions text area change handler for saving custom instructions
     ai_instructions.change(save_custom_instructions_on_change, inputs=ai_instructions, outputs=restore_feedback)
 
-    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit], outputs=[file_input, draft_preview, original_email_display, think_accordion, draft_accordion, original_accordion, key_messages_accordion, key_messages_group, think_output, download_file, current_reply, current_think, status_instructions])
+    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit], outputs=[file_input, draft_preview, original_email_display, think_accordion, draft_accordion, original_accordion, key_messages_accordion, key_messages_group, generate_button_group, think_output, download_file, current_reply, current_think, status_instructions])
 
     # Preference persistence using BrowserState - reliable localStorage alternative
     user_name.change(save_user_name, inputs=[user_name, preferences_state], outputs=preferences_state)
