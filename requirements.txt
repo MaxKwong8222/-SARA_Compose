@@ -32,7 +32,7 @@ requests==2.32.4
 Jinja2==3.1.6
 
 # Data processing
-numpy==2.3.0
+numpy
 pandas==2.3.0
 
 # Image processing
