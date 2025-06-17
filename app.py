@@ -3046,7 +3046,7 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
             <div class="workflow-stages">
                 <div class="stage {'active' if active_stage == 1 else ''}">
                     <div class="stage-header">
-                        <div class="stage-number">{'✓' if active_stage > 1 else '1'}</div>
+                        <div class="stage-number">1</div>
                         <div class="stage-icon">📧</div>
                         <h3 class="stage-title">Upload Email</h3>
                     </div>
