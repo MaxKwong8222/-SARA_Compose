@@ -1139,13 +1139,54 @@ div[data-testid="accordion"] .label-wrap span {
 
 /* Key Messages Accordion Styling */
 .key-messages-accordion {
-    margin-bottom: 16px !important;
+    margin-bottom: 0px !important;
 }
 
 .key-messages-accordion .gradio-accordion {
     background: var(--bg-secondary) !important;
     border: 1px solid var(--border-secondary) !important;
     box-shadow: var(--shadow-sm) !important;
+}
+
+.key-messages-accordion .gradio-accordion-header {
+    transition: all 0.3s ease !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.key-messages-accordion .gradio-accordion-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #8b5cf6 0%, #7c3aed 100%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.key-messages-accordion .gradio-accordion-header:hover::before {
+    opacity: 1;
+}
+
+/* Remove grey padding/margin from key messages card container */
+.key-messages-accordion .gradio-accordion > div {
+    padding-bottom: 0px !important;
+    margin-bottom: 0px !important;
+}
+
+/* Inline Generate Button Styling */
+.generate-button-inline {
+    margin-top: 16px !important;
+    margin-bottom: 0px !important;
+    width: 100% !important;
+}
+
+/* Remove extra spacing from card container for key messages */
+.card {
+    margin-bottom: 8px !important;
+    padding-bottom: 12px !important;
 }
 
 /* Generate Button Section Styling */
@@ -1162,6 +1203,76 @@ div[data-testid="accordion"] .label-wrap span {
     border: 2px dashed var(--primary-color);
     border-radius: var(--radius-lg);
     background: var(--bg-accent);
+}
+
+/* Custom Download Button Styling */
+.custom-download-button {
+    margin: 16px 0 !important;
+    width: 100% !important;
+}
+
+.custom-download-button button {
+    width: 100% !important;
+    padding: 16px 24px !important;
+    font-size: 1.1rem !important;
+    font-weight: 600 !important;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+    border: none !important;
+    border-radius: var(--radius-lg) !important;
+    color: white !important;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3) !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.custom-download-button button:hover {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4) !important;
+    transform: translateY(-2px) !important;
+}
+
+.custom-download-button button:active {
+    transform: translateY(0px) !important;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3) !important;
+}
+
+.custom-download-button button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+.custom-download-button button:hover::before {
+    left: 100%;
+}
+
+/* Subtle pulse animation when button first appears */
+@keyframes downloadButtonPulse {
+    0% {
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+    50% {
+        box-shadow: 0 4px 20px rgba(16, 185, 129, 0.5);
+    }
+    100% {
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+}
+
+.custom-download-button button {
+    animation: downloadButtonPulse 2s ease-in-out 3 !important;
+}
+
+/* Download button within draft accordion styling */
+.draft-download-button {
+    margin-top: 8px !important;
+    margin-bottom: 8px !important;
 }
 
 
@@ -1853,6 +1964,25 @@ button.primary.action-button:hover {
     border: 2px solid #bae6fd !important;
     border-radius: 8px !important;
     font-weight: 600 !important;
+    transition: all 0.3s ease !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.upload-accordion .gradio-accordion-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #0ea5e9 0%, #0284c7 100%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.upload-accordion .gradio-accordion-header:hover::before {
+    opacity: 1;
 }
 
 .draft-accordion .gradio-accordion-header {
@@ -1860,6 +1990,25 @@ button.primary.action-button:hover {
     border: 2px solid #a7f3d0 !important;
     border-radius: 8px !important;
     font-weight: 600 !important;
+    transition: all 0.3s ease !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.draft-accordion .gradio-accordion-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.draft-accordion .gradio-accordion-header:hover::before {
+    opacity: 1;
 }
 
 .original-accordion .gradio-accordion-header {
@@ -1867,12 +2016,58 @@ button.primary.action-button:hover {
     border: 2px solid #e5e7eb !important;
     border-radius: 8px !important;
     font-weight: 600 !important;
+    transition: all 0.3s ease !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.original-accordion .gradio-accordion-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #6b7280 0%, #4b5563 100%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.original-accordion .gradio-accordion-header:hover::before {
+    opacity: 1;
+}
+
+.thinking-accordion .gradio-accordion-header {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%) !important;
+    border: 2px solid #fbbf24 !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: all 0.3s ease !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.thinking-accordion .gradio-accordion-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.thinking-accordion .gradio-accordion-header:hover::before {
+    opacity: 1;
 }
 
 /* Accordion content styling */
 .upload-accordion .gradio-accordion-content,
 .draft-accordion .gradio-accordion-content,
-.original-accordion .gradio-accordion-content {
+.original-accordion .gradio-accordion-content,
+.thinking-accordion .gradio-accordion-content {
     border: none !important;
     border-radius: 0 0 8px 8px !important;
     padding: 0 !important;
@@ -1993,7 +2188,7 @@ def html_to_markdown(html):
     return markdown_text
 
 def standardize_date_format(date_input):
-    """Standardize date format across all emails"""
+    """Standardize date format to match Microsoft Outlook exactly: 'Day, Month DD, YYYY H:MM AM/PM'"""
     if not date_input or date_input == 'Unknown':
         return 'Unknown'
 
@@ -2003,21 +2198,31 @@ def standardize_date_format(date_input):
 
         # Handle datetime objects directly
         if isinstance(date_input, datetime):
-            return date_input.strftime('%A, %B %d, %Y %I:%M %p')
+            # Format exactly like Outlook: "Tuesday, June 3, 2025 6:26 PM"
+            # Always use Windows-compatible format and remove leading zeros manually
+            formatted = date_input.strftime('%A, %B %d, %Y %I:%M %p')
+            # Remove leading zeros manually for cross-platform compatibility
+            formatted = re.sub(r' 0(\d,)', r' \1', formatted)  # Remove leading zero from day
+            formatted = re.sub(r' 0(\d:\d{2} [AP]M)', r' \1', formatted)  # Remove leading zero from hour
+            return formatted
 
         # Convert to string if not already
         date_str = str(date_input).strip()
 
-        # Handle different date formats
+        # Enhanced date patterns to handle more formats
         date_patterns = [
-            # ISO format: 2025-06-03 18:25:59+08:00
+            # ISO format with timezone: 2025-06-03 18:25:59+08:00
             (r'(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})', '%Y-%m-%d %H:%M:%S'),
+            # ISO format with T: 2025-06-03T18:25:59
+            (r'(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})', '%Y-%m-%dT%H:%M:%S'),
             # US format: Tuesday, June 3, 2025 12:05 PM
             (r'(\w+),\s+(\w+)\s+(\d{1,2}),\s+(\d{4})\s+(\d{1,2}:\d{2})\s+(AM|PM)', '%A, %B %d, %Y %I:%M %p'),
             # Short format: June 3, 2025 12:05 PM
             (r'(\w+)\s+(\d{1,2}),\s+(\d{4})\s+(\d{1,2}:\d{2})\s+(AM|PM)', '%B %d, %Y %I:%M %p'),
             # Date only: May 30, 2025
             (r'(\w+)\s+(\d{1,2}),\s+(\d{4})', '%B %d, %Y'),
+            # RFC 2822 format: Mon, 03 Jun 2025 18:26:00 +0800
+            (r'(\w+),\s+(\d{1,2})\s+(\w+)\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})', '%a, %d %b %Y %H:%M:%S'),
         ]
 
         # Try to parse with different patterns
@@ -2040,8 +2245,14 @@ def standardize_date_format(date_input):
                     # Parse the date
                     dt = datetime.strptime(matched_text, format_str)
 
-                    # Return in consistent format: "Day, Month DD, YYYY HH:MM AM/PM"
-                    return dt.strftime('%A, %B %d, %Y %I:%M %p')
+                    # Return in Outlook format: "Tuesday, June 3, 2025 6:26 PM"
+                    # Always use Windows-compatible format and remove leading zeros manually
+                    formatted = dt.strftime('%A, %B %d, %Y %I:%M %p')
+                    # Remove leading zeros manually for cross-platform compatibility
+                    formatted = re.sub(r' 0(\d,)', r' \1', formatted)  # Remove leading zero from day
+                    formatted = re.sub(r' 0(\d:\d{2} [AP]M)', r' \1', formatted)  # Remove leading zero from hour
+
+                    return formatted
                 except Exception as parse_error:
                     print(f"Parse error for '{matched_text}': {parse_error}")
                     continue
@@ -2593,7 +2804,7 @@ def create_threaded_email_content(reply_text, original_email_info):
 
         # Get original email details with complete content preservation
         original_sender = original_email_info.get('sender', 'Unknown')
-        original_date = original_email_info.get('date', 'Unknown')
+        original_date = standardize_date_format(original_email_info.get('date', 'Unknown'))
         original_subject = original_email_info.get('subject', '(No Subject)')
         original_body = original_email_info.get('body', '')
         original_html_body = original_email_info.get('html_body', '')
@@ -2615,9 +2826,9 @@ def create_threaded_email_content(reply_text, original_email_info):
             # Fallback to plain text with basic HTML formatting
             original_body_for_threading = original_body.replace('\n', '<br>')
 
-        # Format recipients for display
-        to_display = '; '.join(to_recipients) if to_recipients else ''
-        cc_display = '; '.join(cc_recipients) if cc_recipients else ''
+        # Format recipients for display (use comma separation like Outlook)
+        to_display = ', '.join(to_recipients) if to_recipients else ''
+        cc_display = ', '.join(cc_recipients) if cc_recipients else ''
 
         # Preserve HTML formatting while cleaning unwanted elements
         clean_reply_html = reply_text
@@ -2682,31 +2893,35 @@ def create_threaded_email_content(reply_text, original_email_info):
 <div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.15; color: #000;">
 {formatted_reply_html}
 <div style="margin: 16px 0;">
-<hr style="border: none; border-top: 2px solid #e5e7eb; margin: 16px 0;">
+<hr style="border: none; border-top: 1px solid #b5b5b5; margin: 16px 0;">
 </div>
 
-<div style="margin: 0; padding: 0;">
-<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>From:</strong> {original_sender}</p>
-<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>Sent:</strong> {original_date}</p>"""
+<div style="margin: 0; padding: 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">
+<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>From:</strong> {original_sender}</p>
+<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>Sent:</strong> {original_date}</p>"""
 
         if to_recipients:
-            threaded_html += f'<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>To:</strong> {to_display}</p>'
+            threaded_html += f'<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>To:</strong> {to_display}</p>'
 
         if cc_recipients:
-            threaded_html += f'<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>Cc:</strong> {cc_display}</p>'
+            threaded_html += f'<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>Cc:</strong> {cc_display}</p>'
 
         # Add subject line to match Outlook format
-        threaded_html += f'<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>Subject:</strong> {original_subject}</p>'
+        threaded_html += f'<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>Subject:</strong> {original_subject}</p>'
 
-        # Add original email body content with minimal styling for authentic Outlook look
+        # Add blank line after Subject (matching Outlook format)
+        threaded_html += '<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;">&nbsp;</p>'
+
+        # Add original email body content with Calibri font for authentic Outlook look
         threaded_html += f"""
-<div style="margin-top: 8px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.15; color: #000;">
+<div style="margin-top: 0px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.15; color: #000000;">
 {original_body_for_threading}
 </div>
 </div>"""
 
-        # Create plain text version (Outlook style with single line breaks)
+        # Create plain text version (Outlook style with proper separator)
         threaded_plain = f"""{reply_plain_text}
+
 ________________________________
 From: {original_sender}
 Sent: {original_date}"""
@@ -2720,8 +2935,9 @@ Sent: {original_date}"""
         # Add subject line to match Outlook format
         threaded_plain += f"\nSubject: {original_subject}"
 
-        # Add original email body content (single line break for proper spacing)
+        # Add blank line after Subject (matching Outlook format) and original email body content
         threaded_plain += f"""
+
 {original_body}"""
 
         return threaded_html, threaded_plain
@@ -2818,8 +3034,15 @@ Content-Type: text/html; charset=utf-8
         p {{ margin: 0 0 11pt 0; }}
         .original-email {{
             margin-top: 16px;
-            border-top: 2px solid #e5e7eb;
+            border-top: 1px solid #b5b5b5;
             padding-top: 8px;
+            font-family: Calibri, Arial, sans-serif;
+        }}
+        .quoted-header {{
+            font-family: Calibri, Arial, sans-serif;
+            font-size: 11pt;
+            color: #000000;
+            line-height: 1.15;
         }}
     </style>
 </head>
@@ -2899,9 +3122,43 @@ def process_msg_file(file):
                 return None, f"Unsupported file type for processing: {type(file)} {file}"
         print(f"temp_path: {temp_path}")
         msg = extract_msg.Message(temp_path)
-        sender = msg.sender or "Unknown"
+
+        # Extract sender with proper name and email formatting
+        raw_sender = msg.sender or "Unknown"
+
+        # Clean up sender formatting - remove unnecessary quotes
+        if raw_sender != "Unknown":
+            # Remove quotes around the name part if present
+            if raw_sender.startswith('"') and '"' in raw_sender[1:]:
+                # Extract name from quotes and email if present
+                quote_end = raw_sender.find('"', 1)
+                name_part = raw_sender[1:quote_end]
+                email_part = raw_sender[quote_end+1:].strip()
+                if email_part.startswith(' <') and email_part.endswith('>'):
+                    sender = f"{name_part} {email_part}"
+                else:
+                    # Try to get email separately
+                    sender_email = getattr(msg, 'senderEmailAddress', None)
+                    if sender_email:
+                        sender = f"{name_part} <{sender_email}>"
+                    else:
+                        sender = name_part
+            elif '<' not in raw_sender:
+                # Try to get sender email separately if not included in sender name
+                sender_email = getattr(msg, 'senderEmailAddress', None)
+                if sender_email:
+                    sender = f"{raw_sender} <{sender_email}>"
+                else:
+                    sender = raw_sender
+            else:
+                sender = raw_sender
+        else:
+            sender = raw_sender
+
         subject = msg.subject or "(No Subject)"
-        date = msg.date or "Unknown"
+        # Apply standardize_date_format to ensure consistent Outlook-style formatting
+        raw_date = msg.date or "Unknown"
+        date = standardize_date_format(raw_date)
         body = msg.body or ""
         html_body = getattr(msg, 'htmlBody', None)
 
@@ -2937,14 +3194,20 @@ def process_msg_file(file):
         if not to_recipients and hasattr(msg, 'to') and msg.to:
             to_str = str(msg.to).strip()
             if to_str:
+                # Clean up and ensure proper formatting
+                to_str = to_str.strip('"').strip()  # Remove quotes if present
                 to_recipients = [to_str]
 
         if not cc_recipients and hasattr(msg, 'cc') and msg.cc:
             cc_str = str(msg.cc).strip()
             if cc_str:
                 # Parse Cc string - split by semicolon and clean up
-                cc_parts = [part.strip().strip('<>') for part in cc_str.split(';') if part.strip()]
-                cc_recipients = [part for part in cc_parts if part]
+                cc_parts = []
+                for part in cc_str.split(';'):
+                    part = part.strip().strip('"').strip()  # Remove quotes and whitespace
+                    if part:
+                        cc_parts.append(part)
+                cc_recipients = cc_parts
 
         # Preserve complete HTML content including images and complex structures
         preserved_html_body = html_body
@@ -3129,6 +3392,15 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                     elem_classes=["draft-display-area"]
                 )
 
+                # Custom download button component - appears when email is generated
+                download_button = gr.DownloadButton(
+                    label="📥 Download Draft Email",
+                    visible=False,
+                    variant="primary",
+                    size="lg",
+                    elem_classes=["custom-download-button", "draft-download-button"]
+                )
+
             # Original Email Accordion - Hidden by default, becomes visible after email upload
             with gr.Accordion("📧 Original Email", open=False, visible=False, elem_classes=["original-accordion"]) as original_accordion:
                 original_email_display = gr.HTML(
@@ -3157,29 +3429,19 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                         max_lines=12
                     )
 
-            # Generate button outside accordion - Hidden by default, becomes visible after email upload
-            with gr.Group(elem_classes=["generate-button-section"], visible=False) as generate_button_group:
-                generate_btn = gr.Button(
-                    "🚀 Generate Reply",
-                    interactive=True,
-                    size="lg",
-                    variant="primary",
-                    elem_classes=["action-button"]
-                )
+                    # Generate button inside accordion - closer to input
+                    generate_btn = gr.Button(
+                        "🚀 Generate Reply",
+                        interactive=True,
+                        size="lg",
+                        variant="primary",
+                        elem_classes=["action-button", "generate-button-inline"]
+                    )
 
 
 
             # SARA Processing Section - Removed (thinking process moved to left column)
-
-            # Actions Section - Download only
-            with gr.Group(elem_classes=["actions-section"]):
-                # Automatic download file component - appears when email is generated
-                download_file = gr.File(
-                    label="📧 Download Draft Email",
-                    visible=False,
-                    interactive=False,
-                    elem_classes=["download-file-section"]
-                )
+            # Actions Section - Removed (download button moved to Draft Response accordion)
 
             # Personal Preferences Section - New section above Development Settings
             with gr.Accordion("👤 Personal Preferences", open=False, elem_classes=["personal-preferences"], elem_id="personal-preferences-accordion"):
@@ -3353,7 +3615,6 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                 gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
                 gr.update(open=False, visible=False),  # Keep key messages accordion closed and hidden
                 gr.update(visible=False),  # Hide entire key messages group container when no file
-                gr.update(visible=False),  # Hide generate button group when no file
                 {},
                 initial_status_html     # Reset status instructions
             )
@@ -3379,7 +3640,6 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                 gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
                 gr.update(open=False, visible=False),  # Keep key messages accordion closed and hidden
                 gr.update(visible=False),  # Hide entire key messages group container on error
-                gr.update(visible=False),  # Hide generate button group on error
                 {},
                 error_status_html       # Show error status
             )
@@ -3396,7 +3656,6 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
             gr.update(open=True, visible=True),    # Make original email accordion visible and open to show content
             gr.update(open=True, visible=True),    # Make key messages accordion visible and auto-expand
             gr.update(visible=True),    # Make entire key messages group container visible after successful upload
-            gr.update(visible=True),    # Make generate button group visible after successful upload
             info,
             success_status_html         # Show success status
         )
@@ -3417,6 +3676,7 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
 
             if file_path and os.path.exists(file_path):
                 print(f"Auto-export successful: {file_path}")
+                # For DownloadButton, we need to return the file path as the value
                 return gr.update(visible=True, value=file_path)
             else:
                 print("Auto-export failed: No file created")
@@ -3510,7 +3770,6 @@ Key Messages to Include:
                     gr.update(open=False, visible=False),  # Close and hide original accordion
                     gr.update(open=False, visible=False),   # Close and hide key messages accordion
                     gr.update(visible=False),  # Hide entire key messages group container
-                    gr.update(visible=False),  # Hide generate button group
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -3541,7 +3800,6 @@ Key Messages to Include:
                     gr.update(open=False, visible=False),  # Close and hide original accordion
                     gr.update(open=False, visible=False),   # Close and hide key messages accordion
                     gr.update(visible=False),  # Hide entire key messages group container
-                    gr.update(visible=False),  # Hide generate button group
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -3573,7 +3831,6 @@ Key Messages to Include:
                     gr.update(open=False, visible=False),  # Close and hide original accordion
                     gr.update(open=False, visible=False),   # Close and hide key messages accordion
                     gr.update(visible=False),  # Hide entire key messages group container
-                    gr.update(visible=False),  # Hide generate button group
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -3612,7 +3869,6 @@ Key Messages to Include:
                 gr.update(open=True, visible=True),  # Make original email accordion visible and open
                 gr.update(open=True, visible=True),  # Make key messages accordion visible and open
                 gr.update(visible=True),  # Make entire key messages group container visible
-                gr.update(visible=True),  # Keep generate button group visible
                 "",                             # Clear thinking content initially
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                             # Clear current_reply state
@@ -3671,7 +3927,6 @@ Key Messages to Include:
                         gr.update(open=True, visible=True), # Keep original email accordion visible and open
                         gr.update(open=True, visible=True), # Keep key messages accordion visible and open
                         gr.update(visible=True), # Keep entire key messages group container visible
-                        gr.update(visible=True), # Keep generate button group visible
                         think_display,                      # Show thinking content if available
                         gr.update(visible=False, value=None),  # Hide download file during generation
                         main_reply,                         # Update current_reply state
@@ -3714,7 +3969,6 @@ Key Messages to Include:
                         gr.update(open=True, visible=True), # Keep original email accordion visible and open
                         gr.update(open=True, visible=True), # Keep key messages accordion visible and open
                         gr.update(visible=True), # Keep entire key messages group container visible
-                        gr.update(visible=True), # Keep generate button group visible
                         think_display,                      # Show thinking content if available
                         download_file_update,               # Show download file
                         main_reply,                         # Update current_reply state
@@ -3748,7 +4002,6 @@ Key Messages to Include:
                 gr.update(open=False, visible=False),  # Close and hide original accordion
                 gr.update(open=False, visible=False),  # Close and hide key messages accordion
                 gr.update(visible=False),  # Hide entire key messages group container
-                gr.update(visible=False),  # Hide generate button group
                 "",                                 # Clear thinking content
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                                 # Clear current_reply state
@@ -3757,7 +4010,7 @@ Key Messages to Include:
             )
 
     # Event handlers - Updated for new component order: Upload → Thinking → Draft → Original
-    file_input.change(extract_and_display_email, inputs=file_input, outputs=[file_input, original_email_display, upload_accordion, original_accordion, key_messages_accordion, key_messages_group, generate_button_group, current_email_info, status_instructions])
+    file_input.change(extract_and_display_email, inputs=file_input, outputs=[file_input, original_email_display, upload_accordion, original_accordion, key_messages_accordion, key_messages_group, current_email_info, status_instructions])
     file_input.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
     key_messages.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
     model_selector.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
@@ -3770,7 +4023,7 @@ Key Messages to Include:
     # AI instructions text area change handler for saving custom instructions
     ai_instructions.change(save_custom_instructions_on_change, inputs=ai_instructions, outputs=restore_feedback)
 
-    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit], outputs=[file_input, draft_preview, original_email_display, think_accordion, draft_accordion, original_accordion, key_messages_accordion, key_messages_group, generate_button_group, think_output, download_file, current_reply, current_think, status_instructions])
+    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit], outputs=[file_input, draft_preview, original_email_display, think_accordion, draft_accordion, original_accordion, key_messages_accordion, key_messages_group, think_output, download_button, current_reply, current_think, status_instructions])
 
     # Preference persistence using BrowserState - reliable localStorage alternative
     user_name.change(save_user_name, inputs=[user_name, preferences_state], outputs=preferences_state)
