@@ -1318,375 +1318,6 @@ custom_css = """
     padding: 16px !important;
     margin: 16px 0 !important;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-/* Accordion Animations */
-.think-streaming {
-    animation: scroll-to-bottom 0.3s ease-out;
-}
-
-@keyframes scroll-to-bottom {
-    to {
-        scroll-behavior: smooth;
-    }
-}
-
-/* Accordion Header Styling - Consolidated */
-.gradio-accordion .label-wrap,
-.gradio-accordion .accordion-header,
-.gradio-accordion button,
-.gradio-accordion [data-testid="accordion-header"],
-.gradio-accordion .accordion-trigger,
-div[data-testid="accordion"] button,
-div[data-testid="accordion"] .label-wrap {
-    font-weight: 700 !important;
-}
-
-.gradio-accordion .label-wrap span,
-.gradio-accordion button span,
-div[data-testid="accordion"] .label-wrap span {
-    font-weight: 700 !important;
-    font-size: 1rem !important;
-}
-
-/* Thinking Content Styling */
-.gradio-accordion .accordion-content,
-.gradio-accordion [data-testid="accordion-content"] {
-    color: var(--text-muted) !important;
-    font-family: 'Microsoft Sans Serif', sans-serif !important;
-    font-size: 11pt !important;
-}
-
-.gradio-accordion .accordion-content p,
-.gradio-accordion [data-testid="accordion-content"] p,
-.gradio-accordion .accordion-content div,
-.gradio-accordion [data-testid="accordion-content"] div {
-    color: var(--text-muted) !important;
-    font-family: 'Microsoft Sans Serif', sans-serif !important;
-    font-size: 11pt !important;
-}
-
-/* Key Messages Accordion Styling */
-.key-messages-accordion {
-    margin-bottom: 0px !important;
-}
-
-.key-messages-accordion .gradio-accordion {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-secondary) !important;
-    box-shadow: var(--shadow-sm) !important;
-}
-
-.key-messages-accordion .gradio-accordion-header {
-    transition: all 0.3s ease !important;
-    position: relative !important;
-    overflow: hidden !important;
-}
-
-.key-messages-accordion .gradio-accordion-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, #8b5cf6 0%, #7c3aed 100%);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.key-messages-accordion .gradio-accordion-header:hover::before {
-    opacity: 1;
-}
-
-/* Remove grey padding/margin from key messages card container */
-.key-messages-accordion .gradio-accordion > div {
-    padding-bottom: 0px !important;
-    margin-bottom: 0px !important;
-}
-
-/* Inline Generate Button Styling */
-.generate-button-inline {
-    margin-top: 16px !important;
-    margin-bottom: 0px !important;
-    width: 100% !important;
-}
-
-/* Remove extra spacing from card container for key messages */
-.card {
-    margin-bottom: 8px !important;
-    padding-bottom: 12px !important;
-}
-
-/* Generate Button Section Styling */
-.generate-button-section {
-    margin-top: 16px !important;
-    margin-bottom: 16px !important;
-    text-align: center;
-}
-
-/* ===== FILE UPLOAD & DROP ZONE COMPONENTS ===== */
-.download-file-section {
-    margin: 16px 0;
-    padding: 12px;
-    border: 2px dashed var(--primary-color);
-    border-radius: var(--radius-lg);
-    background: var(--bg-accent);
-}
-
-/* Custom Download Button Styling */
-.custom-download-button {
-    margin: 16px 0 !important;
-    width: 100% !important;
-}
-
-.custom-download-button button {
-    width: 100% !important;
-    padding: 16px 24px !important;
-    font-size: 1.1rem !important;
-    font-weight: 600 !important;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-    border: none !important;
-    border-radius: var(--radius-lg) !important;
-    color: white !important;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3) !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    position: relative !important;
-    overflow: hidden !important;
-}
-
-.custom-download-button button:hover {
-    background: linear-gradient(135deg, #059669 0%, #047857 100%) !important;
-    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4) !important;
-    transform: translateY(-2px) !important;
-}
-
-.custom-download-button button:active {
-    transform: translateY(0px) !important;
-    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3) !important;
-}
-
-.custom-download-button button::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    transition: left 0.5s;
-}
-
-.custom-download-button button:hover::before {
-    left: 100%;
-}
-
-/* Subtle pulse animation when button first appears */
-@keyframes downloadButtonPulse {
-    0% {
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-    }
-    50% {
-        box-shadow: 0 4px 20px rgba(16, 185, 129, 0.5);
-    }
-    100% {
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-    }
-}
-
-.custom-download-button button {
-    animation: downloadButtonPulse 2s ease-in-out 3 !important;
-}
-
-/* Download button within draft accordion styling */
-.draft-download-button {
-    margin-top: 8px !important;
-    margin-bottom: 8px !important;
-}
-
-
-
-/* Enhanced Upload Panel with Email Preview */
-.upload-panel-collapsed {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-lg);
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    cursor: pointer;
-    transition: var(--transition-normal);
-}
-
-.upload-panel-collapsed:hover {
-    background: var(--bg-tertiary);
-    box-shadow: var(--shadow-sm);
-}
-
-.upload-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-}
-
-.upload-panel-title {
-    font-weight: 600;
-    color: var(--text-primary);
-    font-size: 0.95em;
-}
-
-.upload-panel-toggle {
-    color: var(--text-muted);
-    font-size: 0.8em;
-    transition: var(--transition-fast);
-}
-
-.upload-panel-preview {
-    font-size: 0.85em;
-    color: var(--text-secondary);
-    line-height: 1.4;
-    max-height: 60px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.upload-panel-meta {
-    display: flex;
-    gap: 16px;
-    margin-top: 8px;
-    font-size: 0.8em;
-    color: var(--text-muted);
-}
-
-.upload-panel-meta span {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.email-drop-zone {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 300px;
-    border: 2px dashed var(--border-secondary);
-    border-radius: var(--radius-xl);
-    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
-    transition: var(--transition-normal);
-    cursor: pointer;
-}
-
-.email-drop-zone:hover {
-    border-color: var(--primary-color);
-    background: linear-gradient(135deg, var(--bg-accent) 0%, var(--bg-secondary) 100%);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-lg);
-}
-
-.drop-zone-content {
-    text-align: center;
-    padding: 40px 20px;
-}
-
-.drop-zone-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-    opacity: 0.7;
-    color: var(--text-muted);
-}
-
-.drop-zone-content h3 {
-    margin: 0 0 8px 0;
-    color: var(--text-primary);
-    font-size: 1.25rem;
-    font-weight: 600;
-}
-
-.drop-zone-content p {
-    margin: 0 0 12px 0;
-    color: var(--text-secondary);
-    font-size: 0.95rem;
-}
-
-.drop-zone-hint {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    font-style: italic;
-}
-
-/* Status indicators */
-.status-healthy {
-    color: var(--success-color);
-    font-weight: 600;
-}
-
-.status-error {
-    color: var(--error-color);
-    font-weight: 600;
-}
-
-/* ===== STATUS INDICATORS ===== */
-
-/* ===== SECTION COMPONENTS ===== */
-.generate-section {
-    background: linear-gradient(135deg, var(--bg-accent) 0%, var(--bg-secondary) 100%);
-    border: 1px solid var(--border-accent);
-    border-radius: var(--radius-lg);
-    padding: 16px;
-    text-align: center;
-}
-
-.thinking-section {
-    background: var(--bg-primary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-lg);
-    padding: 0;
-    margin-bottom: 6px;
-    box-shadow: var(--shadow-sm);
-}
-
-
-
-/* Output panel container - matching email preview structure */
-.output-panel-container {
-    max-height: 500px;
-    overflow-y: auto;
-    background: var(--background);
-    border-radius: 8px;
-}
-
-.output-panel-container::-webkit-scrollbar {
-    width: 6px;
-}
-
-.output-panel-container::-webkit-scrollbar-track {
-    background: #f1f5f9;
-}
-
-.output-panel-container::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 3px;
-}
-
-/* Draft preview styling - consistent with email items */
-.draft-preview-item {
-    padding: 20px;
-    background: var(--background);
-    margin: 0;
-    border-radius: 8px;
-}
-
-/* Draft header styling - matching email headers */
-.draft-header {
-    background: #f0f9ff;
-    border: 1px solid #bae6fd;
-    border-radius: 6px;
-    padding: 12px;
-    margin-bottom: 12px;
-    font-size: 0.875rem;
-}
-
-.draft-header-line {
-    margin: 4px 0;
-    display: flex;
 }
 
 .full-width-upload-panel:hover {
@@ -1804,57 +1435,6 @@ div[data-testid="accordion"] .label-wrap span {
     border: none !important;
     padding: 0 !important;
     margin: 0 !important;
-/* Accordion header styling */
-.upload-accordion .gradio-accordion-header {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%) !important;
-    border: 2px solid #bae6fd !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    transition: all 0.3s ease !important;
-    position: relative !important;
-    overflow: hidden !important;
-}
-
-.upload-accordion .gradio-accordion-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, #0ea5e9 0%, #0284c7 100%);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.upload-accordion .gradio-accordion-header:hover::before {
-    opacity: 1;
-}
-
-.draft-accordion .gradio-accordion-header {
-    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
-    border: 2px solid #a7f3d0 !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    transition: all 0.3s ease !important;
-    position: relative !important;
-    overflow: hidden !important;
-}
-
-.draft-accordion .gradio-accordion-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, #10b981 0%, #059669 100%);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.draft-accordion .gradio-accordion-header:hover::before {
-    opacity: 1;
 }
 
 /* ===== ORIGINAL REFERENCE DISPLAY AREA STYLING ===== */
@@ -1863,56 +1443,6 @@ div[data-testid="accordion"] .label-wrap span {
     border: none;
     padding: 0;
     margin: 0;
-.original-accordion .gradio-accordion-header {
-    background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%) !important;
-    border: 2px solid #e5e7eb !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    transition: all 0.3s ease !important;
-    position: relative !important;
-    overflow: hidden !important;
-}
-
-.original-accordion .gradio-accordion-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, #6b7280 0%, #4b5563 100%);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.original-accordion .gradio-accordion-header:hover::before {
-    opacity: 1;
-}
-
-.thinking-accordion .gradio-accordion-header {
-    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%) !important;
-    border: 2px solid #fbbf24 !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-    transition: all 0.3s ease !important;
-    position: relative !important;
-    overflow: hidden !important;
-}
-
-.thinking-accordion .gradio-accordion-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.thinking-accordion .gradio-accordion-header:hover::before {
-    opacity: 1;
 }
 
 /* Remove any default Gradio container styling from original reference display */
@@ -1920,11 +1450,6 @@ div[data-testid="accordion"] .label-wrap span {
 .original-reference-display-area .gradio-html,
 .original-reference-display-area .gradio-html > div {
     background: transparent !important;
-/* Accordion content styling */
-.upload-accordion .gradio-accordion-content,
-.draft-accordion .gradio-accordion-content,
-.original-accordion .gradio-accordion-content,
-.thinking-accordion .gradio-accordion-content {
     border: none !important;
     padding: 0 !important;
     margin: 0 !important;
@@ -2731,40 +2256,26 @@ def create_threaded_email_content(reply_text, original_email_info):
         # Create threaded content with Microsoft Sans Serif for AI reply using tight Outlook-compatible spacing (like Stage 2)
         threaded_html = f"""<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
 {formatted_reply_html}
-<div style="margin: 16px 0;">
-<hr style="border: none; border-top: 1px solid #b5b5b5; margin: 16px 0;">
 </div>
 <div style="margin-top: 16px; border-top: 1px solid #E1E1E1; padding-top: 8px; font-family: Calibri, Arial, sans-serif;">
 <p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>From:</strong> {original_sender}</p>
 <p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Sent:</strong> {original_date}</p>"""
 
-<div style="margin: 0; padding: 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">
-<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>From:</strong> {original_sender}</p>
-<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>Sent:</strong> {original_date}</p>"""
-
         if to_recipients:
             threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>To:</strong> {to_display}</p>'
-            threaded_html += f'<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>To:</strong> {to_display}</p>'
 
         if cc_recipients:
             threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Cc:</strong> {cc_display}</p>'
-            threaded_html += f'<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>Cc:</strong> {cc_display}</p>'
 
         # Add subject line to match Outlook format
         threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Subject:</strong> {original_subject}</p>'
-        threaded_html += f'<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;"><strong>Subject:</strong> {original_subject}</p>'
 
         # Add blank line after Subject (matching Outlook format)
         threaded_html += '<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;">&nbsp;</p>'
 
         # Add original email body content with Calibri font for authentic Outlook look
-        # Add blank line after Subject (matching Outlook format)
-        threaded_html += '<p style="margin: 0 0 0 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.15;">&nbsp;</p>'
-
-        # Add original email body content with Calibri font for authentic Outlook look
         threaded_html += f"""
 <div style="margin-top: 0px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; color: #000000;">
-<div style="margin-top: 0px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.15; color: #000000;">
 {original_body_for_threading}
 </div>
 </div>"""
@@ -2885,7 +2396,6 @@ Content-Type: text/html; charset=utf-8
         .original-email {{
             margin-top: 16px;
             border-top: 1px solid #E1E1E1;
-            border-top: 1px solid #b5b5b5;
             padding-top: 8px;
             font-family: Calibri, Arial, sans-serif;
         }}
@@ -2894,13 +2404,6 @@ Content-Type: text/html; charset=utf-8
             font-size: 11pt;
             color: #000000;
             line-height: 1.0;
-            font-family: Calibri, Arial, sans-serif;
-        }}
-        .quoted-header {{
-            font-family: Calibri, Arial, sans-serif;
-            font-size: 11pt;
-            color: #000000;
-            line-height: 1.15;
         }}
     </style>
 </head>
@@ -3054,39 +2557,6 @@ def process_msg_file(file):
                 sender = f"Unknown <{sender_email}>"
             else:
                 sender = raw_sender
-
-
-        # Extract sender with proper name and email formatting
-        raw_sender = msg.sender or "Unknown"
-
-        # Clean up sender formatting - remove unnecessary quotes
-        if raw_sender != "Unknown":
-            # Remove quotes around the name part if present
-            if raw_sender.startswith('"') and '"' in raw_sender[1:]:
-                # Extract name from quotes and email if present
-                quote_end = raw_sender.find('"', 1)
-                name_part = raw_sender[1:quote_end]
-                email_part = raw_sender[quote_end+1:].strip()
-                if email_part.startswith(' <') and email_part.endswith('>'):
-                    sender = f"{name_part} {email_part}"
-                else:
-                    # Try to get email separately
-                    sender_email = getattr(msg, 'senderEmailAddress', None)
-                    if sender_email:
-                        sender = f"{name_part} <{sender_email}>"
-                    else:
-                        sender = name_part
-            elif '<' not in raw_sender:
-                # Try to get sender email separately if not included in sender name
-                sender_email = getattr(msg, 'senderEmailAddress', None)
-                if sender_email:
-                    sender = f"{raw_sender} <{sender_email}>"
-                else:
-                    sender = raw_sender
-            else:
-                sender = raw_sender
-        else:
-            sender = raw_sender
 
         subject = msg.subject or "(No Subject)"
         # Apply standardize_date_format to ensure consistent Outlook-style formatting
@@ -3427,92 +2897,6 @@ def create_sidebar():
                 interactive=True,
                 elem_id="user-email-input"
             )
-            # Draft Preview Accordion - Closed by default, opens during generation
-            with gr.Accordion("📝 SARA Draft Response", open=False, visible=False, elem_classes=["draft-accordion"]) as draft_accordion:
-                draft_preview = gr.HTML(
-                    value="""
-                    <div class='draft-placeholder'>
-                        <div class='placeholder-content'>
-                            <div class='placeholder-icon'>✍️</div>
-                            <h3>SARA Draft Will Appear Here</h3>
-                            <p>Upload an email and generate a response to see your SARA-composed draft</p>
-                        </div>
-                    </div>
-                    """,
-                    elem_classes=["draft-display-area"]
-                )
-
-                # Custom download button component - appears when email is generated
-                download_button = gr.DownloadButton(
-                    label="📥 Download Draft Email",
-                    visible=False,
-                    variant="primary",
-                    size="lg",
-                    elem_classes=["custom-download-button", "draft-download-button"]
-                )
-
-            # Original Email Accordion - Hidden by default, becomes visible after email upload
-            with gr.Accordion("📧 Original Email", open=False, visible=False, elem_classes=["original-accordion"]) as original_accordion:
-                original_email_display = gr.HTML(
-                    value="""
-                    <div class='email-placeholder'>
-                        <div class='placeholder-content'>
-                            <div class='placeholder-icon'>📧</div>
-                            <h3>Upload Email File Above</h3>
-                            <p>Select your .msg email file to view the original email content</p>
-                        </div>
-                    </div>
-                    """,
-                    elem_classes=["original-email-display-area"]
-                )
-
-        # Right column - All controls and output (optimized workflow)
-        with gr.Column(scale=2, elem_classes=["rhs-controls-column"]):
-            # Top Section - Input Controls with Key Messages Accordion (Hidden by default, entire container)
-            with gr.Group(elem_classes=["card"], visible=False) as key_messages_group:
-                # Key Messages Accordion - Hidden by default, becomes visible after email upload
-                with gr.Accordion("📝 Key Messages", open=False, elem_classes=["key-messages-accordion"]) as key_messages_accordion:
-                    key_messages = gr.Textbox(
-                        label="Enter your key messages",
-                        placeholder="Enter the key messages you want to include in your reply...\n\nExample:\n• Thank them for their inquiry\n• Confirm the meeting time\n• Provide additional resources",
-                        lines=6,
-                        max_lines=12
-                    )
-
-                    # Generate button inside accordion - closer to input
-                    generate_btn = gr.Button(
-                        "🚀 Generate Reply",
-                        interactive=True,
-                        size="lg",
-                        variant="primary",
-                        elem_classes=["action-button", "generate-button-inline"]
-                    )
-
-
-
-            # SARA Processing Section - Removed (thinking process moved to left column)
-            # Actions Section - Removed (download button moved to Draft Response accordion)
-
-            # Personal Preferences Section - New section above Development Settings
-            with gr.Accordion("👤 Personal Preferences", open=False, elem_classes=["personal-preferences"], elem_id="personal-preferences-accordion"):
-                with gr.Group():
-                    gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>User Identity</h4>")
-                    user_name = gr.Textbox(
-                        label="Your Name",
-                        placeholder="Enter your full name...",
-                        value="Max Kwong",
-                        interactive=True,
-                        elem_id="user-name-input",
-                        elem_classes=["preference-input"]
-                    )
-                    user_email = gr.Textbox(
-                        label="Your Email Address",
-                        placeholder="Enter your email address...",
-                        value="mwmkwong@hkma.gov.hk",
-                        interactive=True,
-                        elem_id="user-email-input",
-                        elem_classes=["preference-input"]
-                    )
 
         with gr.Group():
             gr.HTML("<h4 style='margin: 16px 0 12px 0; color: #64748b; font-size: 0.9rem;'>AI Instructions</h4>")
@@ -3988,12 +3372,6 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
                 gr.update(visible=False),  # Hide generate button when no file
                 1,  # Reset to Stage 1
                 [1]  # Only Stage 1 unlocked
-                gr.update(open=True),   # Keep upload accordion open
-                gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
-                gr.update(open=False, visible=False),  # Keep key messages accordion closed and hidden
-                gr.update(visible=False),  # Hide entire key messages group container when no file
-                {},
-                initial_status_html     # Reset status instructions
             )
 
         info, error = process_msg_file(file)
@@ -4022,12 +3400,6 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
                 gr.update(visible=False),  # Hide generate button on error
                 1,  # Stay on Stage 1
                 [1]  # Only Stage 1 unlocked
-                gr.update(open=True),   # Keep upload accordion open for retry
-                gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
-                gr.update(open=False, visible=False),  # Keep key messages accordion closed and hidden
-                gr.update(visible=False),  # Hide entire key messages group container on error
-                {},
-                error_status_html       # Show error status
             )
 
         # Success status - move to Stage 2, unlock Stages 1 and 2
@@ -4047,12 +3419,6 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
             gr.update(visible=True),    # Show generate button when key messages accordion is visible
             2,  # Move to Stage 2
             [1, 2]  # Stages 1 and 2 unlocked
-            gr.update(open=False, visible=False),  # Hide upload accordion after successful upload
-            gr.update(open=True, visible=True),    # Make original email accordion visible and open to show content
-            gr.update(open=True, visible=True),    # Make key messages accordion visible and auto-expand
-            gr.update(visible=True),    # Make entire key messages group container visible after successful upload
-            info,
-            success_status_html         # Show success status
         )
 
 
@@ -4276,10 +3642,6 @@ Key Messages to Include:
                     gr.update(visible=False),  # Hide thread preview group
                     gr.update(visible=False),  # Hide original reference group
                     gr.update(visible=False),  # Hide key messages container
-                    gr.update(open=False, visible=False),  # Hide and close draft accordion
-                    gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),   # Close and hide key messages accordion
-                    gr.update(visible=False),  # Hide entire key messages group container
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -4326,10 +3688,6 @@ Key Messages to Include:
                     gr.update(visible=False),  # Hide thread preview group
                     gr.update(visible=False),  # Hide original reference group
                     gr.update(visible=False),  # Hide key messages container
-                    gr.update(open=False, visible=False),  # Hide and close draft accordion
-                    gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),   # Close and hide key messages accordion
-                    gr.update(visible=False),  # Hide entire key messages group container
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -4368,10 +3726,6 @@ Key Messages to Include:
                     gr.update(visible=False),  # Hide thread preview group
                     gr.update(visible=False),  # Hide original reference group
                     gr.update(visible=False),  # Hide key messages container
-                    gr.update(open=False, visible=False),  # Hide and close draft accordion
-                    gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),   # Close and hide key messages accordion
-                    gr.update(visible=False),  # Hide entire key messages group container
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
@@ -4435,10 +3789,6 @@ Key Messages to Include:
                 gr.update(visible=True),  # Make thread preview group visible to show generation
                 gr.update(visible=False),  # Hide original reference group when draft preview becomes available
                 key_messages_update,            # Clear key messages field if revision, otherwise keep as is
-                gr.update(open=True, visible=True),  # Make draft accordion visible and open to show generation
-                gr.update(open=True, visible=True),  # Make original email accordion visible and open
-                gr.update(open=True, visible=True),  # Make key messages accordion visible and open
-                gr.update(visible=True),  # Make entire key messages group container visible
                 "",                             # Clear thinking content initially
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                             # Clear current_reply state
@@ -4553,25 +3903,6 @@ Key Messages to Include:
                             # Final response - show complete thread preview in main section, original email reference available
                             # Note: No progress update here - users can see the final content being displayed
                             main_reply, think_content = extract_and_separate_think_content(full_response)
-                    # Stream to draft area, keep draft accordion open, show thinking if available
-                    yield (
-                        gr.update(visible=True),            # Keep file input visible for persistent email access
-                        draft_content,                      # Show streaming content in draft area
-                        original_email_preview,             # Keep original email visible
-                        gr.update(visible=think_visible, open=think_visible),  # Show/hide thinking accordion
-                        gr.update(open=True, visible=True), # Keep draft accordion visible and open during streaming
-                        gr.update(open=True, visible=True), # Keep original email accordion visible and open
-                        gr.update(open=True, visible=True), # Keep key messages accordion visible and open
-                        gr.update(visible=True), # Keep entire key messages group container visible
-                        think_display,                      # Show thinking content if available
-                        gr.update(visible=False, value=None),  # Hide download file during generation
-                        main_reply,                         # Update current_reply state
-                        think_content or "",                # Update current_think state
-                        streaming_status_html               # Show streaming status with hints
-                    )
-                else:
-                    # Final response - show complete draft in draft area, keep original email in bottom section
-                    main_reply, think_content = extract_and_separate_think_content(full_response)
 
                             # Format the final complete email thread preview - exactly like download
                             try:
@@ -4715,23 +4046,6 @@ Key Messages to Include:
                         [1, 2]                              # Stages 1 and 2 unlocked
                     )
                     continue
-                    # Final state: draft in top section with accordion open, original email in bottom section
-                    yield (
-                        gr.update(visible=True),            # Keep file input visible for persistent email access
-                        final_draft_content,                # Show final draft content
-                        original_email_preview,             # Keep original email visible
-                        gr.update(visible=think_visible, open=False),  # Show thinking accordion but collapsed
-                        gr.update(open=True, visible=True), # Keep draft accordion visible and open to show final result
-                        gr.update(open=True, visible=True), # Keep original email accordion visible and open
-                        gr.update(open=True, visible=True), # Keep key messages accordion visible and open
-                        gr.update(visible=True), # Keep entire key messages group container visible
-                        think_display,                      # Show thinking content if available
-                        download_file_update,               # Show download file
-                        main_reply,                         # Update current_reply state
-                        think_content or "",                # Update current_think state
-                        completion_status_html              # Show completion status
-                    )
-                    return
             
         except Exception as e:
             import traceback
@@ -4757,10 +4071,6 @@ Key Messages to Include:
                 gr.update(visible=False),  # Hide thread preview group
                 gr.update(visible=False),  # Hide original reference group
                 gr.update(visible=False),  # Hide key messages container
-                gr.update(open=False, visible=False),  # Hide and close draft accordion
-                gr.update(open=False, visible=False),  # Close and hide original accordion
-                gr.update(open=False, visible=False),  # Close and hide key messages accordion
-                gr.update(visible=False),  # Hide entire key messages group container
                 "",                                 # Clear thinking content
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                                 # Clear current_reply state
@@ -4910,11 +4220,6 @@ Key Messages to Include:
     file_input.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
     key_messages.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
     model_selector.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
-    # Event handlers - Updated for new component order: Upload → Thinking → Draft → Original
-    file_input.change(extract_and_display_email, inputs=file_input, outputs=[file_input, original_email_display, upload_accordion, original_accordion, key_messages_accordion, key_messages_group, current_email_info, status_instructions])
-    file_input.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
-    key_messages.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
-    model_selector.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
 
 
 
@@ -4965,7 +4270,6 @@ Key Messages to Include:
             current_email_info, file_input, current_stage, unlocked_stages
         ]
     )
-    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit], outputs=[file_input, draft_preview, original_email_display, think_accordion, draft_accordion, original_accordion, key_messages_accordion, key_messages_group, think_output, download_button, current_reply, current_think, status_instructions])
 
     # Preference persistence using BrowserState - reliable localStorage alternative
     user_name.change(save_user_name, inputs=[user_name, preferences_state], outputs=preferences_state)
