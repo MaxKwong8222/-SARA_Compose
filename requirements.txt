@@ -6,6 +6,7 @@ gradio-client==1.10.3
 extract-msg==0.54.1
 html2text==2025.4.15
 beautifulsoup4==4.13.4
+lxml==5.4.0
 
 # Text processing
 markdown==3.8

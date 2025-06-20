@@ -10,9 +10,100 @@ from abc import ABC, abstractmethod
 from typing import Iterator, Tuple
 import fastapi_poe as fp
 from dotenv import load_dotenv
+import time
+import threading
+import json
+import lxml
+from concurrent.futures import ThreadPoolExecutor
+import queue
 
 # Load environment variables from .env file
 load_dotenv()
+
+# HTML Parser Cache - Global cache for parser availability and performance
+PARSER_CACHE = {
+    'lxml_available': None,
+    'preferred_parser': None,
+    'initialized': False,
+    'test_results': {}
+}
+
+def initialize_parser_cache():
+    """Initialize parser cache at startup to avoid repeated availability checks"""
+    global PARSER_CACHE
+
+    if PARSER_CACHE['initialized']:
+        return
+
+    print("Initializing HTML parser cache...")
+
+    try:
+        # Test lxml availability with actual parsing
+        test_html = "<p>Parser test content</p>"
+        start_time = time.time()
+        soup = BeautifulSoup(test_html, "lxml")
+        lxml_time = time.time() - start_time
+
+        if soup and soup.find('p'):
+            PARSER_CACHE['lxml_available'] = True
+            PARSER_CACHE['preferred_parser'] = 'lxml'
+            PARSER_CACHE['test_results']['lxml'] = lxml_time
+            print(f"✅ lxml parser available and tested ({lxml_time:.4f}s)")
+        else:
+            raise Exception("lxml parsing test failed")
+
+    except Exception as e:
+        print(f"⚠️ lxml parser not available: {e}")
+        PARSER_CACHE['lxml_available'] = False
+        PARSER_CACHE['preferred_parser'] = 'html.parser'
+
+    # Test html.parser as fallback
+    try:
+        start_time = time.time()
+        soup = BeautifulSoup(test_html, "html.parser")
+        html_parser_time = time.time() - start_time
+        PARSER_CACHE['test_results']['html.parser'] = html_parser_time
+        print(f"✅ html.parser available and tested ({html_parser_time:.4f}s)")
+    except Exception as e:
+        print(f"❌ html.parser failed: {e}")
+
+    PARSER_CACHE['initialized'] = True
+    print(f"Parser cache initialized. Preferred parser: {PARSER_CACHE['preferred_parser']}")
+
+# HKMA Purple Color Theme Configuration
+hkma_purple_color = gr.themes.Color(
+    name="HKMA_purple",
+    c50="#faf5ff",
+    c100="#e9d5ff",
+    c200="#c084fc",
+    c300="#a855f7",
+    c400="#7e22ce",
+    c500="#6b21a8",
+    c600="#581c87",
+    c700="#4c1a73",
+    c800="#461964",
+    c900="#43185D",
+    c950="#42185A",
+)
+
+# Create HKMA-themed Gradio theme
+hkma_theme = gr.themes.Soft(
+    primary_hue=hkma_purple_color,
+    secondary_hue=hkma_purple_color,
+    neutral_hue=gr.themes.colors.gray,
+).set(
+    # Button styling
+    button_primary_background_fill=hkma_purple_color.c600,
+    button_primary_background_fill_hover=hkma_purple_color.c700,
+    button_primary_text_color="white",
+    button_primary_border_color=hkma_purple_color.c600,
+
+    # Input focus colors
+    input_border_color_focus=hkma_purple_color.c500,
+
+    # Block and label styling
+    block_label_text_color=hkma_purple_color.c700,
+)
 
 MAX_FILE_SIZE_MB = 10
 ALLOWED_EXTENSIONS = ['.msg']
@@ -26,11 +117,303 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 # Available Models
 POE_MODELS = ["GPT-4o", "DeepSeek-R1-Distill"]
 OPENROUTER_MODELS = [
-    "deepseek/deepseek-r1-distill-qwen-32b:free",
-    "qwen/qwen3-32b:free",
-    "qwen/qwen3-30b-a3b:free",
-    "google/gemma-3-27b-it:free"
+"deepseek/deepseek-r1-distill-qwen-32b:free",
+"qwen/qwen3-32b:free",
+"qwen/qwen3-30b-a3b:free",
+"google/gemma-3-27b-it:free"
 ]
+
+# Model validation cache settings
+MODEL_CACHE_DURATION = 300 # 5 minutes in seconds
+model_validation_cache = {
+"openrouter": {
+"models": [],
+"last_updated": 0,
+"is_valid": False
+},
+"poe": {
+"models": [],
+"last_updated": 0,
+"is_valid": False
+}
+}
+
+# HTML Parser configuration
+HTML_PARSER_OPTIONS = [
+    "Auto (lxml with html.parser fallback)",
+    "Force html.parser",
+    "Force lxml"
+]
+DEFAULT_PARSER_CHOICE = "Auto (lxml with html.parser fallback)"
+
+# Global parser preference (can be updated by UI)
+current_parser_preference = DEFAULT_PARSER_CHOICE
+
+# Model validation functions
+def fetch_openrouter_models():
+    """Fetch available models from OpenRouter API"""
+    try:
+        import requests
+
+        if not OPENROUTER_API_KEY:
+            print("OpenRouter API key not configured")
+            return []
+
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.get(
+            "https://openrouter.ai/api/v1/models",
+            headers=headers,
+            timeout=10
+        )
+
+        if response.status_code == 200:
+            models_data = response.json()
+            available_models = []
+
+            # Extract model IDs from the response
+            for model in models_data.get('data', []):
+                model_id = model.get('id', '')
+                if model_id:
+                    available_models.append(model_id)
+
+            print(f"Fetched {len(available_models)} models from OpenRouter API")
+            return available_models
+        else:
+            print(f"Failed to fetch OpenRouter models: {response.status_code}")
+            return []
+
+    except Exception as e:
+        print(f"Error fetching OpenRouter models: {e}")
+        return []
+def validate_openrouter_models():
+    """Validate OpenRouter models and update cache"""
+    current_time = time.time()
+    cache = model_validation_cache["openrouter"]
+
+    # Check if cache is still valid
+    if (cache["is_valid"] and
+        current_time - cache["last_updated"] < MODEL_CACHE_DURATION):
+        return cache["models"]
+
+    # Fetch fresh model list
+    available_models = fetch_openrouter_models()
+
+    # Filter our preferred models to only include available ones
+    validated_models = []
+    for model in OPENROUTER_MODELS:
+        if model in available_models:
+            validated_models.append(model)
+        else:
+            print(f"Model {model} not available in OpenRouter")
+
+    # Update cache
+    cache["models"] = validated_models
+    cache["last_updated"] = current_time
+    cache["is_valid"] = len(validated_models) > 0
+
+    print(f"Validated {len(validated_models)} OpenRouter models")
+    return validated_models
+
+def fetch_poe_models():
+    """Fetch available models from POE API"""
+    try:
+        if not POE_API_KEY:
+            print("POE API key not configured")
+            return []
+
+        # For POE, we'll use a simplified validation approach to avoid async generator cleanup issues
+        # Since POE doesn't have a simple "list models" endpoint like OpenRouter, and the test calls
+        # can cause async generator cleanup warnings, we'll do a basic API key format validation
+        # and assume our static model list is valid if the API key is properly configured
+
+        # Basic API key validation - check if it's not empty and has reasonable format
+        if POE_API_KEY and len(POE_API_KEY.strip()) > 10:
+            # API key appears to be configured, return our known models
+            # The actual validation will happen during real usage
+            print(f"POE API key configured, returning {len(POE_MODELS)} models")
+            return POE_MODELS
+        else:
+            print("POE API key appears to be invalid or too short")
+            return []
+
+    except ImportError:
+        print("POE backend requires 'fastapi_poe' package")
+        return []
+    except Exception as e:
+        print(f"Error validating POE API: {e}")
+        return []
+
+def validate_poe_models():
+    """Validate POE models and update cache"""
+    current_time = time.time()
+    cache = model_validation_cache["poe"]
+
+    # Check if cache is still valid
+    if (cache["is_valid"] and
+        current_time - cache["last_updated"] < MODEL_CACHE_DURATION):
+        return cache["models"]
+
+    # Fetch fresh model list
+    available_models = fetch_poe_models()
+
+    # Update cache
+    cache["models"] = available_models
+    cache["last_updated"] = current_time
+    cache["is_valid"] = len(available_models) > 0
+
+    print(f"Validated {len(available_models)} POE models")
+    return available_models
+
+def get_default_model(backend_type):
+    """Get default model for backend type"""
+    if backend_type == "openrouter":
+        return "deepseek/deepseek-r1-distill-qwen-32b:free"
+    else: # poe
+        return "GPT-4o"
+
+def validate_model_selection(backend_type, model):
+    """Validate that a model is available for the given backend"""
+    if backend_type == "poe":
+        available_models = validate_poe_models()
+        return model in available_models
+    elif backend_type == "openrouter":
+        available_models = validate_openrouter_models()
+        return model in available_models
+    return False
+
+def get_fallback_model(backend_type, unavailable_model):
+    """Get a fallback model when the selected model becomes unavailable"""
+    print(f"Model {unavailable_model} is no longer available for {backend_type}")
+
+    if backend_type == "openrouter":
+        available_models = validate_openrouter_models()
+        if available_models:
+            # Try to return the default model if available
+            default_model = get_default_model(backend_type)
+            if default_model in available_models:
+                return default_model
+            # Otherwise return the first available model
+            return available_models[0]
+    elif backend_type == "poe":
+        available_models = validate_poe_models()
+        if available_models:
+            # Try to return the default model if available
+            default_model = get_default_model(backend_type)
+            if default_model in available_models:
+                return default_model
+            # Otherwise return the first available model
+            return available_models[0]
+
+    return None
+def initialize_model_validation():
+    """Initialize model validation on startup"""
+    print("Initializing model validation...")
+
+    # Pre-warm the OpenRouter model cache if API key is available
+    if OPENROUTER_API_KEY:
+        try:
+            # Run validation in background thread to avoid blocking startup
+            def background_openrouter_validation():
+                validate_openrouter_models()
+
+            validation_thread = threading.Thread(target=background_openrouter_validation, daemon=True)
+            validation_thread.start()
+            print("Started background OpenRouter model validation")
+        except Exception as e:
+            print(f"Failed to start background OpenRouter model validation: {e}")
+    else:
+        print("OpenRouter API key not configured, skipping OpenRouter model validation")
+
+    # Pre-warm the POE model cache if API key is available
+    if POE_API_KEY:
+        try:
+            # Run validation in background thread to avoid blocking startup
+            def background_poe_validation():
+                validate_poe_models()
+
+            validation_thread = threading.Thread(target=background_poe_validation, daemon=True)
+            validation_thread.start()
+            print("Started background POE model validation")
+        except Exception as e:
+            print(f"Failed to start background POE model validation: {e}")
+    else:
+        print("POE API key not configured, skipping POE model validation")
+
+# HTML Parser selection functions
+def get_parser_from_choice(parser_choice):
+    """Convert UI choice to BeautifulSoup parser string"""
+    if "html.parser" in parser_choice:
+        return "html.parser"
+    elif "lxml" in parser_choice:
+        return "lxml"
+    else:  # Auto mode
+        return "auto"
+
+def create_soup_with_parser(html_content, parser_choice, context=""):
+    """Optimized BeautifulSoup creation with parser caching and performance tracking"""
+    # Initialize cache if not already done
+    if not PARSER_CACHE['initialized']:
+        initialize_parser_cache()
+
+    start_time = time.time()
+    parser_used = None
+    error_message = None
+
+    try:
+        parser_type = get_parser_from_choice(parser_choice)
+
+        if parser_type == "auto":
+            # Use cached preferred parser instead of trying both
+            parser = PARSER_CACHE['preferred_parser']
+            if parser == "lxml" and not PARSER_CACHE['lxml_available']:
+                # Fallback if cache is inconsistent
+                parser = "html.parser"
+            soup = BeautifulSoup(html_content, parser)
+            parser_used = parser
+
+        elif parser_type == "html.parser":
+            # Force html.parser
+            soup = BeautifulSoup(html_content, "html.parser")
+            parser_used = "html.parser"
+
+        elif parser_type == "lxml":
+            # Force lxml with cache check
+            if not PARSER_CACHE['lxml_available']:
+                error_message = "lxml parser not available. Please install with 'pip install lxml' or switch to html.parser"
+                raise Exception(error_message)
+
+            soup = BeautifulSoup(html_content, "lxml")
+            parser_used = "lxml"
+
+        parse_time = time.time() - start_time
+
+        # Only log detailed timing in development mode or for slow operations
+        if parse_time > 0.1 or context == "parser_test":
+            print(f"HTML parsing in {context}: {parser_used} parser, {parse_time:.3f}s")
+
+        return soup, parser_used, parse_time, None
+
+    except Exception as e:
+        parse_time = time.time() - start_time
+        final_error = error_message or str(e)
+        print(f"HTML parsing failed in {context}: {final_error}")
+        return None, parser_used, parse_time, final_error
+
+def get_parser_performance_info(parser_used, parse_time, error=None):
+    """Generate performance information string for UI feedback"""
+    if error:
+        return f"❌ Parser Error: {error}"
+
+    performance_icon = "🚀" if parser_used == "lxml" else "🐌"
+    time_str = f"{parse_time:.3f}s"
+
+    return f"{performance_icon} Parsed with {parser_used} ({time_str})"
+
+
 
 
 
@@ -65,7 +448,7 @@ class AIBackend(ABC):
         pass
 
     @abstractmethod
-    def stream_response(self, prompt: str, model: str) -> Iterator[Tuple[str, bool]]:
+    def stream_response(self, prompt: str, model: str, conversation_history: list = None) -> Iterator[Tuple[str, bool]]:
         """Stream response from the AI backend
 
         Args:
@@ -78,7 +461,6 @@ class AIBackend(ABC):
         pass
 
 
-
 class POEBackend(AIBackend):
     """POE API backend implementation using fastapi_poe"""
 
@@ -89,19 +471,30 @@ class POEBackend(AIBackend):
         """Check if POE API is available"""
         return bool(self.api_key)
 
-    def stream_response(self, prompt: str, model: str) -> Iterator[Tuple[str, bool]]:
+    def stream_response(self, prompt: str, model: str, conversation_history: list = None) -> Iterator[Tuple[str, bool]]:
         """Stream response from POE API"""
         try:
             if not self.api_key:
                 yield "POE API key not configured", True
                 return
 
-            if model not in POE_MODELS:
+            # Validate model availability dynamically
+            available_models = validate_poe_models()
+            if model not in available_models:
                 yield f"Model {model} not available in POE", True
                 return
 
-            # Prepare messages for POE API
-            messages = [fp.ProtocolMessage(role="user", content=prompt)]
+            # Prepare messages for POE API - use conversation history if provided
+            if conversation_history:
+                messages = []
+                for msg in conversation_history:
+                    # Map OpenAI role format to POE role format
+                    poe_role = msg["role"]
+                    if poe_role == "assistant":
+                        poe_role = "bot" # POE uses 'bot' instead of 'assistant'
+                    messages.append(fp.ProtocolMessage(role=poe_role, content=msg["content"]))
+            else:
+                messages = [fp.ProtocolMessage(role="user", content=prompt)]
 
             # Stream the response using POE API
             try:
@@ -145,14 +538,16 @@ class OpenRouterBackend(AIBackend):
         """Check if OpenRouter API is available"""
         return bool(self.api_key)
 
-    def stream_response(self, prompt: str, model: str) -> Iterator[Tuple[str, bool]]:
+    def stream_response(self, prompt: str, model: str, conversation_history: list = None) -> Iterator[Tuple[str, bool]]:
         """Stream response from OpenRouter API"""
         try:
             if not self.api_key:
                 yield "OpenRouter API key not configured", True
                 return
 
-            if model not in OPENROUTER_MODELS:
+            # Validate model availability dynamically
+            available_models = validate_openrouter_models()
+            if model not in available_models:
                 yield f"Model {model} not available in OpenRouter", True
                 return
 
@@ -168,10 +563,16 @@ class OpenRouterBackend(AIBackend):
                 "X-Title": "SARA Compose"
             }
 
+            # Prepare messages - use conversation history if provided, otherwise single prompt
+            if conversation_history:
+                messages = conversation_history
+            else:
+                messages = [{"role": "user", "content": prompt}]
+
             # Prepare request payload
             payload = {
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
                 "stream": True,
                 "temperature": 0.3,
                 "max_tokens": 2000
@@ -243,7 +644,7 @@ class BackendManager:
     def __init__(self):
         self.poe_backend = POEBackend()
         self.openrouter_backend = OpenRouterBackend()
-        self.current_backend_type = "poe"  # Default to POE
+        self.current_backend_type = "poe" # Default to POE (GPT-4o priority)
 
     def set_backend(self, backend_type: str):
         """Set the current backend type"""
@@ -259,7 +660,7 @@ class BackendManager:
         elif self.current_backend_type == "openrouter":
             return self.openrouter_backend
         else:
-            return self.poe_backend  # Fallback to POE
+            return self.poe_backend # Fallback to POE
 
     def get_healthy_backend(self) -> AIBackend:
         """Get a healthy backend, with automatic fallback if current is unhealthy"""
@@ -290,13 +691,23 @@ class BackendManager:
         return self.poe_backend.is_healthy() or self.openrouter_backend.is_healthy()
 
     def get_available_models(self) -> list:
-        """Get available models for current backend"""
+        """Get available models for current backend with dynamic validation"""
         if self.current_backend_type == "poe":
-            return POE_MODELS
+            # Return validated models from cache/API
+            validated_models = validate_poe_models()
+            if not validated_models:
+                print("No validated POE models available, falling back to static list")
+                return POE_MODELS # Fallback to static list if validation fails
+            return validated_models
         elif self.current_backend_type == "openrouter":
-            return OPENROUTER_MODELS
+            # Return validated models from cache/API
+            validated_models = validate_openrouter_models()
+            if not validated_models:
+                print("No validated OpenRouter models available, falling back to static list")
+                return OPENROUTER_MODELS # Fallback to static list if validation fails
+            return validated_models
         else:
-            return POE_MODELS  # Fallback
+            return POE_MODELS # Fallback
 
     def get_backend_status(self) -> dict:
         """Get status of all backends"""
@@ -315,17 +726,155 @@ class BackendManager:
 # Initialize backend manager
 backend_manager = BackendManager()
 
+# Global thread pool for asynchronous AI generation
+AI_THREAD_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ai_gen")
+
+def ai_generation_worker(result_queue, prompt, model, updated_conversation_history, info, key_msgs, user_name, ai_instructions, email_token_limit):
+    """Worker function for AI generation that runs in background thread"""
+    try:
+        # Get healthy backend for AI generation
+        healthy_backend = backend_manager.get_healthy_backend()
+        full_response = ""
+
+        # Stream the response using the backend
+        for chunk, done in healthy_backend.stream_response(prompt, model, updated_conversation_history):
+            full_response += chunk
+            # Use thread-safe queue to communicate with main thread
+            result_queue.put(('chunk', full_response, done))
+            if done:
+                break
+
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"Exception in ai_generation_worker: {e}\n{tb}")
+        result_queue.put(('error', str(e), True))
 
 
-def create_bouncing_dots_html(text="Processing"):
-    """Create bouncing dots loading animation HTML"""
+
+def create_bouncing_dots_html(text="Processing", model=None, backend_type=None):
+    """Create bouncing dots loading animation HTML with optional model and backend information"""
+
+    # Create detailed text with model and backend info if provided
+    if model and backend_type:
+        # Get provider display name
+        provider_name = "POE" if backend_type == "poe" else "OpenRouter"
+
+        # Format model name for display
+        if backend_type == "poe":
+            model_display = model  # POE models are already clean (e.g., "GPT-4o")
+        else:
+            # OpenRouter models need formatting (e.g., "deepseek/deepseek-r1-distill-qwen-32b:free" -> "DeepSeek R1 Distill")
+            if "deepseek" in model.lower():
+                if "r1-distill" in model.lower():
+                    model_display = "DeepSeek R1 Distill"
+                else:
+                    model_display = "DeepSeek"
+            elif "qwen" in model.lower():
+                if "qwen3-32b" in model.lower():
+                    model_display = "Qwen 3 32B"
+                elif "qwen3-30b" in model.lower():
+                    model_display = "Qwen 3 30B"
+                else:
+                    model_display = "Qwen"
+            elif "gemma" in model.lower():
+                model_display = "Gemma 3 27B"
+            else:
+                # Fallback: use the model name as-is
+                model_display = model
+
+        detailed_text = f"{text} using {model_display} via {provider_name}"
+    else:
+        detailed_text = text
+
     return f"""
     <div style="display: flex; align-items: center; justify-content: center; padding: 20px;">
-        <span style="margin-right: 12px; font-weight: 500; color: var(--text-primary);">{text}</span>
+        <span style="margin-right: 12px; font-weight: 500; color: var(--text-primary);">{detailed_text}</span>
         <div class="bouncing-dots">
             <div class="dot"></div>
             <div class="dot"></div>
             <div class="dot"></div>
+        </div>
+    </div>
+    """
+
+def create_loading_overlay_html(text="Processing", model=None, backend_type=None, background_content=""):
+    """Create loading overlay that preserves background content while showing loading message"""
+
+    # Create detailed text with model and backend info if provided
+    if model and backend_type:
+        # Get provider display name
+        provider_name = "POE" if backend_type == "poe" else "OpenRouter"
+
+        # Format model name for display
+        if backend_type == "poe":
+            model_display = model  # POE models are already clean (e.g., "GPT-4o")
+        else:
+            # OpenRouter models need formatting
+            if "deepseek" in model.lower():
+                if "r1-distill" in model.lower():
+                    model_display = "DeepSeek R1 Distill"
+                else:
+                    model_display = "DeepSeek"
+            elif "qwen" in model.lower():
+                if "qwen3-32b" in model.lower():
+                    model_display = "Qwen 3 32B"
+                elif "qwen3-30b" in model.lower():
+                    model_display = "Qwen 3 30B"
+                else:
+                    model_display = "Qwen"
+            elif "gemma" in model.lower():
+                model_display = "Gemma 3 27B"
+            else:
+                model_display = model
+
+        detailed_text = f"{text} using {model_display} via {provider_name}"
+    else:
+        detailed_text = text
+
+    # If no background content provided, show placeholder
+    if not background_content.strip():
+        background_content = """
+        <div class='thread-placeholder'>
+            <div class='placeholder-content'>
+                <div class='placeholder-icon'>📧</div>
+                <h3>Draft Email Preview Will Appear Here</h3>
+                <p>Upload an email and generate a response to see your draft email exactly as you'll download it</p>
+            </div>
+        </div>
+        """
+
+    return f"""
+    <div style="position: relative; min-height: 200px;">
+        <!-- Background content (dimmed) -->
+        <div style="opacity: 0.3; pointer-events: none;">
+            {background_content}
+        </div>
+
+        <!-- Loading overlay - positioned at top for better visibility -->
+        <div style="
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 16px 24px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(4px);
+            z-index: 10;
+            min-width: 280px;
+            text-align: center;
+        ">
+            <div style="display: flex; align-items: center; justify-content: center;">
+                <span style="margin-right: 12px; font-weight: 500; color: #374151; font-size: 13px;">{detailed_text}</span>
+                <div class="bouncing-dots">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+            </div>
         </div>
     </div>
     """
@@ -336,118 +885,70 @@ def create_bouncing_dots_html(text="Processing"):
 
 
 
-# SARA Framework CSS - Clean, professional design with consistent color scheme
+# SARA Framework CSS - Clean, professional design with HKMA purple color scheme
+
 custom_css = """
-/* ===== UNIFIED COLOR SYSTEM ===== */
+/* ===== BANNER-ONLY CSS - Minimal styling for workflow banner ===== */
+
+/* Essential CSS variables for banner colors */
 :root {
-    /* Primary Brand Colors - Updated to Orange Theme to Match Gradio */
-    --primary-color: #f97316;
-    --primary-hover: #ea580c;
-    --primary-light: #fb923c;
-    --primary-gradient: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
-
-    /* Secondary Colors */
-    --secondary-color: #6366f1;
-    --secondary-hover: #5b21b6;
-    --secondary-light: #8b5cf6;
-
-    /* Accent Colors - Consistent Orange Theme */
-    --accent-color: #f97316;
-    --accent-hover: #ea580c;
-    --accent-light: #fb923c;
-    --accent-gradient: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
-
-    /* Status Colors */
-    --success-color: #10b981;
-    --success-hover: #059669;
-    --success-light: #34d399;
-    --success-gradient: linear-gradient(135deg, #10b981 0%, #34d399 100%);
-
-    --error-color: #ef4444;
-    --error-hover: #dc2626;
-    --error-light: #f87171;
-
-    --warning-color: #f97316;
-    --warning-hover: #ea580c;
-    --warning-light: #fb923c;
-
-    --info-color: #f97316;
-    --info-hover: #ea580c;
-    --info-light: #fb923c;
-
-    /* Text Colors */
-    --text-primary: #111827;
-    --text-secondary: #374151;
-    --text-muted: #6b7280;
-    --text-light: #9ca3af;
-    --text-inverse: #ffffff;
-
-    /* Background Colors */
-    --bg-primary: #ffffff;
-    --bg-secondary: #f9fafb;
-    --bg-tertiary: #f3f4f6;
-    --bg-accent: #eff6ff;
-
-    /* Border Colors */
-    --border-primary: #e5e7eb;
-    --border-secondary: #d1d5db;
-    --border-accent: #bae6fd;
-
-    /* Shadow System */
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-
-    /* Border Radius System */
-    --radius-sm: 4px;
-    --radius-md: 6px;
-    --radius-lg: 8px;
-    --radius-xl: 12px;
-
-    /* Transition System */
-    --transition-fast: all 0.15s ease;
-    --transition-normal: all 0.2s ease;
-    --transition-slow: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    /* Primary Brand Colors - HKMA Purple Theme */
+    --primary-color: #6b21a8;
+    --primary-hover: #581c87;
+    --primary-light: #a855f7;
+    --primary-gradient: linear-gradient(135deg, #6b21a8 0%, #a855f7 100%);
 }
 
-/* ===== LAYOUT & CONTAINER STYLES ===== */
-.gradio-container {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg-secondary);
-    max-width: 1800px;
-    width: 100%;
-    margin: 0 auto;
-    padding: 20px;
-    min-height: 100vh;
-    box-sizing: border-box;
+/* ===== GRADIO NATIVE STYLING OVERRIDES ===== */
+/* Borderless Group - Removes default Group styling (grey background and borders) */
+.borderless-group {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
 }
 
-/* Ensure consistent dashboard width */
-.gradio-container > div {
-    width: 100%;
-    min-width: 1200px;
+/* Comprehensive targeting for status-instructions Group to make it transparent */
+#status-instructions,
+#status-instructions > div,
+#status-instructions > div > div,
+#status-instructions .gradio-group,
+#status-instructions .gradio-container,
+#status-instructions .block,
+.gradio-group#status-instructions,
+.block#status-instructions,
+.gradio-container#status-instructions {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
 }
 
-/* Main row container for stable layout */
-.main-layout-row {
-    display: flex;
-    width: 100%;
-    gap: 20px;
-    min-height: 600px;
+/* Additional comprehensive targeting for status-instructions Gradio elements */
+.gradio-app #status-instructions,
+.gradio-app #status-instructions > div,
+.gradio-app #status-instructions .gradio-group {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
 }
-
-
 
 /* ===== DYNAMIC STATUS INSTRUCTIONS PANEL ===== */
 .status-instructions-panel {
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 12px;
-    margin: 20px 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 100%;
+    position: relative;
+    z-index: 100;
 }
 
 /* Workflow stages layout */
@@ -479,101 +980,21 @@ custom_css = """
     left: 0;
     right: 0;
     height: 4px;
-    background: linear-gradient(90deg, #f97316 0%, #fb923c 100%);
+    background: linear-gradient(90deg, #6b21a8 0%, #a855f7 100%);
     opacity: 0;
     transition: opacity 0.3s ease;
 }
 
 .stage.active {
-    background: linear-gradient(135deg, #fff7ed 0%, #fed7aa 100%);
-    border-color: #f97316;
+    background: linear-gradient(135deg, #faf5ff 0%, #e9d5ff 100%);
+    border-color: #6b21a8;
     opacity: 1;
     transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(249, 115, 22, 0.15);
+    box-shadow: 0 8px 25px rgba(107, 33, 168, 0.15);
 }
 
 .stage.active::before {
     opacity: 1;
-}
-
-/* ===== BANNER EMOJI ANIMATION - WIGGLE DANCE ===== */
-/*
- * ENHANCED WIGGLE DANCE ANIMATION
- *
- * Playful, eye-catching wiggle/shake motion for workflow stage emojis.
- * Features enhanced visual impact with larger size, stronger rotation,
- * and vibrant drop-shadow effects.
- */
-
-/* Enhanced stage icon styling with larger size */
-.stage-icon {
-    font-size: 4rem;
-    margin-right: 12px;
-    transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-    filter: grayscale(100%);
-    display: inline-block;
-    line-height: 1;
-}
-
-.stage.active .stage-icon {
-    filter: grayscale(0%);
-    animation: enhanced-wiggle-dance 1.2s ease-in-out infinite;
-}
-
-/* Enhanced Wiggle Dance Animation - More Intense */
-@keyframes enhanced-wiggle-dance {
-    0%, 100% {
-        transform: rotate(0deg) scale(1);
-        filter: grayscale(0%) drop-shadow(0 0 8px rgba(249, 115, 22, 0.4));
-    }
-    8% {
-        transform: rotate(-5deg) scale(1.05);
-        filter: grayscale(0%) drop-shadow(0 0 15px rgba(249, 115, 22, 0.6));
-    }
-    16% {
-        transform: rotate(5deg) scale(1.08);
-        filter: grayscale(0%) drop-shadow(0 0 20px rgba(249, 115, 22, 0.7));
-    }
-    24% {
-        transform: rotate(-4deg) scale(1.06);
-        filter: grayscale(0%) drop-shadow(0 0 18px rgba(249, 115, 22, 0.65));
-    }
-    32% {
-        transform: rotate(4deg) scale(1.07);
-        filter: grayscale(0%) drop-shadow(0 0 22px rgba(249, 115, 22, 0.75));
-    }
-    40% {
-        transform: rotate(-3deg) scale(1.09);
-        filter: grayscale(0%) drop-shadow(0 0 25px rgba(249, 115, 22, 0.8));
-    }
-    48% {
-        transform: rotate(3deg) scale(1.07);
-        filter: grayscale(0%) drop-shadow(0 0 22px rgba(249, 115, 22, 0.75));
-    }
-    56% {
-        transform: rotate(-4deg) scale(1.05);
-        filter: grayscale(0%) drop-shadow(0 0 18px rgba(249, 115, 22, 0.65));
-    }
-    64% {
-        transform: rotate(4deg) scale(1.06);
-        filter: grayscale(0%) drop-shadow(0 0 20px rgba(249, 115, 22, 0.7));
-    }
-    72% {
-        transform: rotate(-3deg) scale(1.04);
-        filter: grayscale(0%) drop-shadow(0 0 16px rgba(249, 115, 22, 0.6));
-    }
-    80% {
-        transform: rotate(3deg) scale(1.03);
-        filter: grayscale(0%) drop-shadow(0 0 14px rgba(249, 115, 22, 0.55));
-    }
-    88% {
-        transform: rotate(-2deg) scale(1.02);
-        filter: grayscale(0%) drop-shadow(0 0 12px rgba(249, 115, 22, 0.5));
-    }
-    96% {
-        transform: rotate(1deg) scale(1.01);
-        filter: grayscale(0%) drop-shadow(0 0 10px rgba(249, 115, 22, 0.45));
-    }
 }
 
 .stage-header {
@@ -599,12 +1020,24 @@ custom_css = """
 }
 
 .stage.active .stage-number {
-    background: #f97316;
+    background: #6b21a8;
     color: white;
-    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
+    box-shadow: 0 6px 20px rgba(107, 33, 168, 0.4);
 }
 
+.stage-icon {
+    font-size: 4rem;
+    margin-right: 12px;
+    transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    filter: grayscale(100%);
+    display: inline-block;
+    line-height: 1;
+}
 
+.stage.active .stage-icon {
+    filter: grayscale(0%);
+    animation: enhanced-wiggle-dance 1.2s ease-in-out infinite;
+}
 
 .stage-title {
     font-weight: 700;
@@ -630,6 +1063,208 @@ custom_css = """
 .stage.active .stage-description {
     color: #374151;
     font-weight: 600;
+}
+
+/* ===== CLICKABLE STAGE NAVIGATION STYLES ===== */
+.stage.clickable {
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+/* ===== DISABLED STAGE NAVIGATION STYLES ===== */
+.stage.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    background: rgba(248, 250, 252, 0.3) !important;
+    border-color: transparent !important;
+}
+
+.stage.disabled .stage-number {
+    background: #f1f5f9 !important;
+    color: #94a3b8 !important;
+    box-shadow: none !important;
+}
+
+.stage.disabled .stage-icon {
+    filter: grayscale(100%) !important;
+    opacity: 0.5;
+}
+
+.stage.disabled .stage-title {
+    color: #94a3b8 !important;
+    font-weight: 500 !important;
+}
+
+.stage.disabled .stage-description {
+    color: #cbd5e1 !important;
+    font-weight: 400 !important;
+}
+
+/* Prevent hover effects on disabled stages */
+.stage.disabled:hover {
+    background: rgba(248, 250, 252, 0.3) !important;
+    border-color: transparent !important;
+    transform: none !important;
+    box-shadow: none !important;
+    cursor: not-allowed;
+}
+
+.stage.disabled:hover::before {
+    opacity: 0 !important;
+}
+
+.stage.disabled:hover .stage-number {
+    background: #f1f5f9 !important;
+    color: #94a3b8 !important;
+    box-shadow: none !important;
+}
+
+.stage.disabled:hover .stage-title {
+    color: #94a3b8 !important;
+    font-weight: 500 !important;
+}
+
+.stage.disabled:hover .stage-description {
+    color: #cbd5e1 !important;
+    font-weight: 400 !important;
+}
+
+.stage.disabled:hover .stage-icon {
+    filter: grayscale(100%) !important;
+    transform: none !important;
+    opacity: 0.5;
+}
+
+.stage.clickable:hover {
+    background: linear-gradient(135deg, #faf5ff 0%, #e9d5ff 100%);
+    border-color: #6b21a8;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(107, 33, 168, 0.15);
+}
+
+.stage.clickable:hover::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #6b21a8 0%, #581c87 100%);
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.stage.clickable:hover .stage-number {
+    background: linear-gradient(135deg, #6b21a8 0%, #581c87 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(107, 33, 168, 0.3);
+}
+
+.stage.clickable:hover .stage-title {
+    color: #581c87;
+    font-weight: 700;
+}
+
+.stage.clickable:hover .stage-description {
+    color: #4c1a73;
+    font-weight: 600;
+}
+
+.stage.clickable:hover .stage-icon {
+    filter: grayscale(0%);
+    transform: scale(1.05);
+}
+
+/* Focus styles for accessibility */
+.stage.clickable:focus {
+    outline: 2px solid #6b21a8;
+    outline-offset: 2px;
+    background: linear-gradient(135deg, #faf5ff 0%, #e9d5ff 100%);
+    border-color: #6b21a8;
+}
+
+/* Button press animation with reduced motion support */
+.stage.clickable:active {
+    transform: translateY(0px);
+    box-shadow: 0 2px 6px rgba(107, 33, 168, 0.2);
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+    .stage.clickable {
+        transition: background-color 0.2s ease, border-color 0.2s ease;
+    }
+
+    .stage.clickable:hover {
+        transform: none;
+    }
+
+    .stage.clickable:hover .stage-icon {
+        transform: none;
+    }
+
+    .stage.clickable:active {
+        transform: none;
+    }
+}
+
+/* Enhanced Wiggle Dance Animation for active stage icons */
+@keyframes enhanced-wiggle-dance {
+    0%, 100% {
+        transform: rotate(0deg) scale(1);
+        filter: grayscale(0%) drop-shadow(0 0 8px rgba(107, 33, 168, 0.4));
+    }
+    8% {
+        transform: rotate(-5deg) scale(1.05);
+        filter: grayscale(0%) drop-shadow(0 0 15px rgba(107, 33, 168, 0.6));
+    }
+    16% {
+        transform: rotate(5deg) scale(1.08);
+        filter: grayscale(0%) drop-shadow(0 0 20px rgba(107, 33, 168, 0.7));
+    }
+    24% {
+        transform: rotate(-4deg) scale(1.06);
+        filter: grayscale(0%) drop-shadow(0 0 18px rgba(107, 33, 168, 0.65));
+    }
+    32% {
+        transform: rotate(4deg) scale(1.07);
+        filter: grayscale(0%) drop-shadow(0 0 22px rgba(107, 33, 168, 0.75));
+    }
+    40% {
+        transform: rotate(-3deg) scale(1.09);
+        filter: grayscale(0%) drop-shadow(0 0 25px rgba(107, 33, 168, 0.8));
+    }
+    48% {
+        transform: rotate(3deg) scale(1.07);
+        filter: grayscale(0%) drop-shadow(0 0 22px rgba(107, 33, 168, 0.75));
+    }
+    56% {
+        transform: rotate(-4deg) scale(1.05);
+        filter: grayscale(0%) drop-shadow(0 0 18px rgba(107, 33, 168, 0.65));
+    }
+    64% {
+        transform: rotate(4deg) scale(1.06);
+        filter: grayscale(0%) drop-shadow(0 0 20px rgba(107, 33, 168, 0.7));
+    }
+    72% {
+        transform: rotate(-3deg) scale(1.04);
+        filter: grayscale(0%) drop-shadow(0 0 16px rgba(107, 33, 168, 0.6));
+    }
+    80% {
+        transform: rotate(3deg) scale(1.03);
+        filter: grayscale(0%) drop-shadow(0 0 14px rgba(107, 33, 168, 0.55));
+    }
+    88% {
+        transform: rotate(-2deg) scale(1.02);
+        filter: grayscale(0%) drop-shadow(0 0 12px rgba(107, 33, 168, 0.5));
+    }
+    96% {
+        transform: rotate(1deg) scale(1.01);
+        filter: grayscale(0%) drop-shadow(0 0 10px rgba(107, 33, 168, 0.45));
+    }
 }
 
 /* Responsive design for workflow stages */
@@ -673,195 +1308,106 @@ custom_css = """
     }
 }
 
-
-
-/* ===== RESPONSIVE DESIGN ===== */
-@media (max-width: 768px) {
-
+/* ===== UPLOAD PANEL STYLING ===== */
+/* Full-width upload panel styling with HKMA purple theme consistency */
+.full-width-upload-panel {
+    border: 2px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    background: linear-gradient(135deg, #fafafa 0%, #f8fafc 100%) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+    padding: 16px !important;
+    margin: 16px 0 !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ===== CARD COMPONENTS ===== */
-.card {
-    background: var(--bg-primary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-lg);
-    padding: 16px;
-    margin-bottom: 12px;
-    box-shadow: var(--shadow-sm);
-    transition: var(--transition-normal);
-    position: relative;
-    overflow: hidden;
+.full-width-upload-panel:hover {
+    border-color: #6b21a8 !important;
+    box-shadow: 0 4px 15px rgba(107, 33, 168, 0.1) !important;
 }
 
-.card:hover {
-    box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
+/* File input styling within upload panel */
+.full-width-file-input {
+    border: 2px dashed #d1d5db !important;
+    border-radius: 8px !important;
+    background: white !important;
+    transition: all 0.3s ease !important;
 }
 
-.card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: var(--primary-gradient);
-    opacity: 0;
-    transition: var(--transition-normal);
+.full-width-file-input:hover {
+    border-color: #6b21a8 !important;
+    background: linear-gradient(135deg, #faf5ff 0%, #f3f4f6 100%) !important;
 }
 
-.card:hover::before {
-    opacity: 1;
+/* Additional comprehensive targeting for upload panel Gradio elements */
+.gradio-app .full-width-upload-panel,
+.gradio-app .full-width-upload-panel > div,
+.gradio-app .full-width-upload-panel .gradio-group {
+    border: 2px solid #e2e8f0 !important;
+    border-radius: 12px !important;
+    background: linear-gradient(135deg, #fafafa 0%, #f8fafc 100%) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
+    padding: 16px !important;
+    margin: 16px 0 !important;
 }
-
-
 
 /* ===== EMAIL PREVIEW COMPONENTS ===== */
-.email-preview-container {
-    max-height: 500px;
-    overflow-y: auto;
-    overflow-x: hidden;
+/* Email Panel Container Styling - Removes Gradio's default grey padding/container styling */
+.email-panel-container {
+    border: 1px solid #d1d5db;
+    border-top: none;
+    background: white;
+    border-radius: 0 0 8px 8px;
+    overflow: hidden;
+    position: relative;
+    z-index: 1;
 }
 
-.email-thread {
+
+
+.email-panel-content {
     padding: 0;
     margin: 0;
-    overflow: visible;
+    background: white;
+    border: none;
 }
 
-.email-item {
-    padding: 20px;
-    position: relative;
-    background: var(--bg-primary);
-    margin: 0;
+/* ===== GLOBAL TEXTBOX STYLING - Remove grey rectangles ===== */
+/* Fix for unwanted grey rectangles at bottom of input boxes */
+.gradio-textbox {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
 }
 
-.email-item:last-child {
-    border-bottom: none;
+.gradio-textbox > div {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+    background: transparent !important;
 }
 
-.email-item:not(:last-child) {
-    margin-bottom: 32px;
-    padding-bottom: 24px;
-    position: relative;
-    border-bottom: none;
+/* Remove any grey container backgrounds from all textbox elements */
+.gradio-textbox,
+.gradio-textbox > div,
+.gradio-textbox > div > div,
+.gradio-textbox > div > div > div {
+    background: transparent !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
 }
 
-.email-item:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    bottom: -16px;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent 0%, var(--border-secondary) 15%, var(--text-light) 50%, var(--border-secondary) 85%, transparent 100%);
-    box-shadow: var(--shadow-sm);
+/* Ensure textarea elements have proper white background */
+.gradio-textbox textarea {
+    background: white !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 16px !important;
 }
 
-.email-item:not(:last-child)::before {
-    content: '';
-    position: absolute;
-    bottom: -20px;
-    left: -20px;
-    right: -20px;
-    height: 8px;
-    background: linear-gradient(180deg, transparent 0%, var(--bg-secondary) 50%, transparent 100%);
-    border-radius: var(--radius-sm);
-    z-index: -1;
-}
-
-/* ===== EMAIL HEADER & BODY STYLES ===== */
-.email-header {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-md);
-    padding: 12px;
-    margin-bottom: 12px;
-    font-size: 0.875rem;
-}
-
-.email-header-line {
-    margin: 4px 0;
-    display: flex;
-}
-
-.email-header-label {
-    font-weight: 600;
-    color: var(--text-primary);
-    min-width: 60px;
-    margin-right: 8px;
-}
-
-.email-header-value {
-    color: var(--text-secondary);
-    flex: 1;
-}
-
-.email-body {
-    line-height: 1.6;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-}
-
-.email-body p {
-    margin: 8px 0;
-}
-
-.email-body a {
-    color: #0066cc;
-    text-decoration: none;
-    transition: var(--transition-fast);
-}
-
-.email-body a:hover {
-    color: #004499;
-    text-decoration: underline;
-}
-
-/* ===== ACCORDION COMPONENTS ===== */
-
-/* Accordion Content Styling */
-.gradio-accordion .accordion-content,
-.gradio-accordion [data-testid="accordion-content"] {
-    max-height: 400px;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 12px;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-secondary) var(--bg-secondary);
-}
-
-/* Accordion Scrollbar Styling */
-.gradio-accordion .accordion-content::-webkit-scrollbar,
-.gradio-accordion [data-testid="accordion-content"]::-webkit-scrollbar {
-    width: 6px;
-}
-
-.gradio-accordion .accordion-content::-webkit-scrollbar-track,
-.gradio-accordion [data-testid="accordion-content"]::-webkit-scrollbar-track {
-    background: var(--bg-secondary);
-    border-radius: var(--radius-sm);
-}
-
-.gradio-accordion .accordion-content::-webkit-scrollbar-thumb,
-.gradio-accordion [data-testid="accordion-content"]::-webkit-scrollbar-thumb {
-    background: var(--border-secondary);
-    border-radius: var(--radius-sm);
-}
-
-.gradio-accordion .accordion-content::-webkit-scrollbar-thumb:hover,
-.gradio-accordion [data-testid="accordion-content"]::-webkit-scrollbar-thumb:hover {
-    background: var(--text-light);
-}
-
-/* Accordion Container Fixes */
-.gradio-accordion {
-    overflow: visible;
-    transition: var(--transition-slow);
-}
-
+/* ===== EMAIL PREVIEW COLUMN STYLING ===== */
 .email-preview-column {
     overflow: visible;
+    margin-right: 16px;
+    flex: 4;
+    min-width: 800px;
+    width: 80%;
 }
 
 .email-preview-column .gradio-accordion {
@@ -873,1371 +1419,41 @@ custom_css = """
     max-height: none;
 }
 
-/* Accordion Animations */
-.think-streaming {
-    animation: scroll-to-bottom 0.3s ease-out;
-}
-
-@keyframes scroll-to-bottom {
-    to {
-        scroll-behavior: smooth;
-    }
-}
-
-/* Accordion Header Styling - Consolidated */
-.gradio-accordion .label-wrap,
-.gradio-accordion .accordion-header,
-.gradio-accordion button,
-.gradio-accordion [data-testid="accordion-header"],
-.gradio-accordion .accordion-trigger,
-div[data-testid="accordion"] button,
-div[data-testid="accordion"] .label-wrap {
-    font-weight: 700;
-}
-
-.gradio-accordion .label-wrap span,
-.gradio-accordion button span,
-div[data-testid="accordion"] .label-wrap span {
-    font-weight: 700;
-    font-size: 1rem;
-}
-
-/* Thinking Content Styling */
-.gradio-accordion .accordion-content,
-.gradio-accordion [data-testid="accordion-content"] {
-    color: var(--text-muted);
-    font-family: 'Microsoft Sans Serif', sans-serif;
-    font-size: 11pt;
-}
-
-.gradio-accordion .accordion-content p,
-.gradio-accordion [data-testid="accordion-content"] p,
-.gradio-accordion .accordion-content div,
-.gradio-accordion [data-testid="accordion-content"] div {
-    color: var(--text-muted);
-    font-family: 'Microsoft Sans Serif', sans-serif;
-    font-size: 11pt;
-}
-
-/* Key Messages Accordion Styling */
-.key-messages-accordion {
-    margin-bottom: 0;
-}
-
-.key-messages-accordion .gradio-accordion {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-secondary);
-}
-
-.key-messages-accordion .gradio-accordion-header {
-    transition: all 0.3s ease;
-    position: relative;
-    overflow: hidden;
-}
-
-/* Remove grey padding/margin from key messages card container */
-.key-messages-accordion .gradio-accordion > div {
-    padding-bottom: 0;
-    margin-bottom: 0;
-}
-
-/* Inline Generate Button Styling */
-.generate-button-inline {
-    margin-top: 16px;
-    margin-bottom: 0;
-    width: 100%;
-}
-
-/* Remove extra spacing from card container for key messages */
-.card {
-    margin-bottom: 8px;
-    padding-bottom: 12px;
-}
-
-/* Generate Button Section Styling */
-.generate-button-section {
-    margin-top: 16px;
-    margin-bottom: 16px;
-    text-align: center;
-}
-
-/* ===== FILE UPLOAD & DROP ZONE COMPONENTS ===== */
-.download-file-section {
-    margin: 16px 0;
-    padding: 12px;
-    border: 2px dashed var(--primary-color);
-    border-radius: var(--radius-lg);
-    background: var(--bg-accent);
-}
-
-/* Custom Download Button Styling */
-.custom-download-button {
-    margin: 0;
-    width: 100%;
-}
-
-.custom-download-button button {
-    width: 100%;
-    padding: 16px 24px;
-    font-size: 1.1rem;
-    font-weight: 600;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    border: none;
-    border-radius: var(--radius-lg);
-    color: white;
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-}
-
-.custom-download-button button:hover {
-    background: linear-gradient(135deg, #059669 0%, #047857 100%);
-    box-shadow: 0 8px 25px rgba(16, 185, 129, 0.5);
-}
-
-.custom-download-button button:active {
-    transform: scale(0.95);
-    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
-}
-
-.custom-download-button button:active {
-    transform: translateY(0px);
-    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
-}
-
-.custom-download-button button::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    transition: left 0.5s;
-}
-
-.custom-download-button button:hover::before {
-    left: 100%;
-}
-
-/* Subtle pulse animation when button first appears */
-@keyframes downloadButtonPulse {
-    0% {
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-    }
-    50% {
-        box-shadow: 0 4px 20px rgba(16, 185, 129, 0.5);
-    }
-    100% {
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-    }
-}
-
-.custom-download-button button {
-    animation: downloadButtonPulse 2s ease-in-out 3;
-}
-
-/* Download button within draft accordion styling - Remove spacing */
-.draft-download-button {
-    margin-top: 0;
-    margin-bottom: 0;
-}
-
-/* Ensure no spacing between draft content and download button */
-.draft-accordion .gradio-accordion > div > div {
-    gap: 0;
-}
-
-.draft-accordion .gradio-html + .gradio-downloadbutton {
-    margin-top: 0;
-}
-
-/* Remove any default spacing from the draft accordion container */
-.draft-accordion .gradio-accordion > div {
-    padding-bottom: 0;
-}
-
-/* Ensure seamless connection between response and download button */
-.draft-accordion .gradio-html {
-    margin-bottom: 0 !important;
-}
-
-.draft-accordion .gradio-downloadbutton {
-    margin-top: 0 !important;
-}
-
-/* Remove any gap in the flex container */
-.draft-accordion .gradio-accordion > div > div > div {
-    gap: 0 !important;
-}
-
-
-
-/* Enhanced Upload Panel with Email Preview */
-.upload-panel-collapsed {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-lg);
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    cursor: pointer;
-    transition: var(--transition-normal);
-}
-
-.upload-panel-collapsed:hover {
-    background: var(--bg-tertiary);
-}
-
-.upload-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
-}
-
-.upload-panel-title {
-    font-weight: 600;
-    color: var(--text-primary);
-    font-size: 0.95em;
-}
-
-.upload-panel-toggle {
-    color: var(--text-muted);
-    font-size: 0.8em;
-    transition: var(--transition-fast);
-}
-
-.upload-panel-preview {
-    font-size: 0.85em;
-    color: var(--text-secondary);
-    line-height: 1.4;
-    max-height: 60px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.upload-panel-meta {
-    display: flex;
-    gap: 16px;
-    margin-top: 8px;
-    font-size: 0.8em;
-    color: var(--text-muted);
-}
-
-.upload-panel-meta span {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.email-drop-zone {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 300px;
-    border: 2px dashed var(--border-secondary);
-    border-radius: var(--radius-xl);
-    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
-    transition: var(--transition-normal);
-    cursor: pointer;
-}
-
-.email-drop-zone:hover {
-    border-color: var(--primary-color);
-    background: linear-gradient(135deg, var(--bg-accent) 0%, var(--bg-secondary) 100%);
-}
-
-.drop-zone-content {
-    text-align: center;
-    padding: 40px 20px;
-}
-
-.drop-zone-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-    opacity: 0.7;
-    color: var(--text-muted);
-}
-
-.drop-zone-content h3 {
-    margin: 0 0 8px 0;
-    color: var(--text-primary);
-    font-size: 1.25rem;
-    font-weight: 600;
-}
-
-.drop-zone-content p {
-    margin: 0 0 12px 0;
-    color: var(--text-secondary);
-    font-size: 0.95rem;
-}
-
-.drop-zone-hint {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    font-style: italic;
-}
-
-/* Status indicators */
-.status-healthy {
-    color: var(--success-color);
-    font-weight: 600;
-}
-
-.status-error {
-    color: var(--error-color);
-    font-weight: 600;
-}
-
-/* ===== STATUS INDICATORS ===== */
-
-/* ===== SECTION COMPONENTS ===== */
-.generate-section {
-    background: linear-gradient(135deg, var(--bg-accent) 0%, var(--bg-secondary) 100%);
-    border: 1px solid var(--border-accent);
-    border-radius: var(--radius-lg);
-    padding: 16px;
-    text-align: center;
-}
-
-
-
-
-
-/* Output panel container - matching email preview structure */
-.output-panel-container {
-    max-height: 500px;
-    overflow-y: auto;
-    background: var(--background);
-    border-radius: 8px;
-    margin-bottom: 0;
-}
-
-.output-panel-container::-webkit-scrollbar {
-    width: 6px;
-}
-
-.output-panel-container::-webkit-scrollbar-track {
-    background: #f1f5f9;
-}
-
-.output-panel-container::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 3px;
-}
-
-/* Draft preview styling - consistent with email items */
-.draft-preview-item {
-    padding: 20px;
-    background: var(--background);
-    margin: 0;
-    margin-bottom: 0;
-    border-radius: 8px;
-}
-
-/* Draft header styling - matching email headers */
-.draft-header {
-    background: #f0f9ff;
-    border: 1px solid #bae6fd;
-    border-radius: 6px;
-    padding: 12px;
-    margin-bottom: 12px;
-    font-size: 0.875rem;
-}
-
-.draft-header-line {
-    margin: 4px 0;
-    display: flex;
-}
-
-.draft-header-label {
-    font-weight: 600;
-    color: var(--text-color);
-    min-width: 60px;
-    margin-right: 8px;
-}
-
-.draft-header-value {
-    color: var(--text-secondary);
-    flex: 1;
-}
-
-/* Draft content styling - matching email body */
-.draft-content {
-    line-height: 1.6;
-    color: var(--text-color);
-    font-size: 11pt;
-    font-family: 'Microsoft Sans Serif', sans-serif;
-}
-
-.draft-content p {
-    margin: 0; /* Remove default margins - inline styles handle Outlook-compatible spacing */
-}
-
-.draft-content a {
-    color: #0066cc;
-    text-decoration: none;
-}
-
-.draft-content a:hover {
-    text-decoration: underline;
-}
-
-
-
-/* Empty state */
-.empty-state {
-    text-align: center;
-    padding: 40px 20px;
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-}
-
-/* Scrollbar */
-.email-preview-container::-webkit-scrollbar {
-    width: 6px;
-}
-
-.email-preview-container::-webkit-scrollbar-track {
-    background: #f1f5f9;
-}
-
-.email-preview-container::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 3px;
-}
-
-/* Reply formatting */
-.reply-content {
-    line-height: 1.6;
-    color: var(--text-color);
-    padding: 16px;
-    background: var(--background);
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-}
-
-.reply-content p {
-    margin: 0; /* Remove default margins - inline styles handle Outlook-compatible spacing */
-}
-
-.reply-content strong {
-    font-weight: 600;
-}
-
-/* Enhanced streaming and generation indicators */
-.streaming {
-    opacity: 0.8;
-    animation: pulse 1.5s ease-in-out infinite;
-    position: relative;
-    overflow: hidden;
-}
-
-.streaming::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent 0%, rgba(99, 102, 241, 0.1) 50%, transparent 100%);
-    animation: shimmer 2s infinite;
-    z-index: 1;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 0.8; }
-    50% { opacity: 1; }
-}
-
-@keyframes shimmer {
-    0% { left: -100%; }
-    100% { left: 100%; }
-}
-
-/* Generation state indicators */
-.generating-state {
-    background: linear-gradient(90deg, #f0f9ff 0%, #e0f2fe 50%, #f0f9ff 100%);
-    background-size: 200% 100%;
-    animation: shimmer-bg 2s infinite;
-    border: 2px solid #f97316;
-    border-radius: 8px;
-    padding: 16px;
-    position: relative;
-}
-
-@keyframes shimmer-bg {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
-}
-
-
-
-@keyframes success-glow {
-    0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-    70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-}
-
-/* Copy notification */
-.copy-notification {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    background: var(--primary-color);
-    color: white;
-    padding: 12px 20px;
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    z-index: 1000;
-    animation: slideIn 0.3s ease-out;
-}
-
-@keyframes slideIn {
-    from {
-        transform: translateX(100%);
-        opacity: 0;
-    }
-    to {
-        transform: translateX(0);
-        opacity: 1;
-    }
-}
-
-/* 2-Column Layout Optimization - Left column for email preview/draft display */
-.email-preview-column {
-    margin-right: 16px; /* Right margin for spacing from controls column */
-    flex: 1.5; /* Larger proportion for maximum content visibility */
-    min-width: 600px; /* Ensure stable minimum width */
-    width: 60%; /* Fixed percentage width for consistency */
-}
-
-/* Right column for all controls - optimized workflow */
-.rhs-controls-column {
-    margin-left: 8px; /* Left margin for spacing from preview column */
-    flex: 1; /* Smaller proportion to maximize preview space */
-    min-width: 400px; /* Ensure adequate space for controls */
-    width: 40%; /* Fixed percentage width for consistency */
-    max-width: 500px; /* Prevent excessive expansion */
-}
-
-/* Stable accordion containers */
-.gradio-accordion {
-    min-height: 60px; /* Minimum height to prevent layout shifts */
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Ensure stable content areas */
-.draft-display-area, .original-email-display-area {
-    min-height: 200px;
-    transition: all 0.3s ease;
-}
-
-/* Integrated file upload styling */
-.integrated-file-upload {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-    border: 2px dashed var(--primary-color);
-    border-radius: 8px;
-    padding: 16px;
-    text-align: center;
-    transition: all 0.3s ease;
-}
-
-.integrated-file-upload:hover {
-    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-    border-color: var(--accent-color);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
-}
-
-/* Enhanced spacing for 2-column layout with improved transitions */
-.rhs-controls-column .gradio-group {
-    margin-bottom: 16px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    transform-origin: top;
-}
-
-.rhs-controls-column .gradio-group:last-child {
-    margin-bottom: 0;
-}
-
-/* Remove margin from actions section to prevent gaps when hidden */
-.rhs-controls-column .actions-section {
-    margin-bottom: 0;
-}
-
-/* Ensure clean layout when hidden elements don't create gaps */
-.rhs-controls-column .gradio-group[style*="display: none"],
-.rhs-controls-column .gradio-group[style*="visibility: hidden"] {
-    margin-bottom: 0;
-    margin-top: 0;
-}
-
-/* Section transition animations */
-.section-transition {
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    transform-origin: top;
-}
-
-
-
-
-
-/* Action buttons styling - Enhanced with animations */
-.action-button,
-button.action-button,
-.gradio-button.action-button {
-    background: var(--accent-gradient);
-    border: none;
-    color: var(--text-inverse);
-    padding: 12px 24px;
-    font-size: 1rem;
-    font-weight: 600;
-    border-radius: var(--radius-lg);
-    margin: 0;
-    min-width: 160px;
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-    box-shadow: var(--shadow-sm);
-    /* Override any parent container backgrounds */
-    position: relative;
-    z-index: 10;
-}
-
-.action-button:hover,
-button.action-button:hover,
-.gradio-button.action-button:hover {
-    background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent-light) 100%);
-    box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
-    border: none;
-    color: var(--text-inverse);
-}
-
-.action-button:active,
-button.action-button:active,
-.gradio-button.action-button:active {
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
-    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
-}
-
-/* Widescreen layout optimizations for 2-column design */
-@media (min-width: 1440px) {
-    .gradio-container {
-        max-width: 2000px; /* Even wider for large monitors */
-        padding: 24px;
-    }
-
-    .email-preview-column {
-        margin-right: 20px;
-        flex: 1.6; /* Increased proportion for better content display */
-    }
-
-    .rhs-controls-column {
-        margin-left: 12px;
-        min-width: 450px; /* Slightly wider for better control spacing */
-    }
-}
-
-/* Ultra-wide monitor support for 2-column design */
-@media (min-width: 1920px) {
-    .gradio-container {
-        max-width: 2400px;
-        padding: 32px;
-    }
-
-    .email-preview-column {
-        margin-right: 24px;
-        flex: 1.7; /* Maximum proportion for ultra-wide displays */
-    }
-
-    .rhs-controls-column {
-        margin-left: 16px;
-        min-width: 500px; /* Optimal width for ultra-wide displays */
-    }
-}
-
-/* ===== ANIMATION SYSTEM ===== */
-/* Animation Variables */
-:root {
-    --anim-duration-fast: 0.15s;
-    --anim-duration-normal: 0.3s;
-    --anim-duration-slow: 0.5s;
-    --anim-easing-cubic: cubic-bezier(0.4, 0, 0.2, 1);
-    --anim-easing-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
-}
-
-/* Accessibility - Reduced Motion Support */
-@media (prefers-reduced-motion: reduce) {
-    * {
-        animation-duration: 0.01ms;
-        animation-iteration-count: 1;
-        transition-duration: 0.01ms;
-    }
-
-    .btn-hover-scale:hover,
-    .btn-press-animation:active {
-        box-shadow: none;
-    }
-
-    .bouncing-dots .dot {
-        animation: none;
-    }
-
-    /* Disable banner emoji animations for reduced motion */
-    .stage.active .stage-icon {
-        animation: none;
-        transform: none;
-        filter: grayscale(0%) drop-shadow(0 0 8px rgba(249, 115, 22, 0.3));
-        font-size: 4rem;
-    }
-
-    /* Disable card hover animations for reduced motion */
-    .upload-accordion::before,
-    .draft-accordion::before,
-    .original-accordion::before,
-    .thinking-accordion::before,
-    .key-messages-accordion::before,
-    .personal-preferences::before,
-    .disclaimer::before,
-    .support-feedback::before,
-    .changelog::before,
-    .dev-settings::before {
-        transition: none;
-        opacity: 0;
-    }
-
-    .upload-accordion:hover::before,
-    .draft-accordion:hover::before,
-    .original-accordion:hover::before,
-    .thinking-accordion:hover::before,
-    .key-messages-accordion:hover::before,
-    .personal-preferences:hover::before,
-    .disclaimer:hover::before,
-    .support-feedback:hover::before,
-    .changelog:hover::before,
-    .dev-settings:hover::before {
-        opacity: 0;
-    }
-}
-
-/* Button Animations */
-.btn-hover-scale {
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-}
-
-.btn-hover-scale:hover {
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
-}
-
-.btn-press-animation:active {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    transform: scale(0.95);
-    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
-}
-
-/* Bouncing Dots Loading Animation */
-.bouncing-dots {
-    display: inline-flex;
-    gap: 4px;
-    align-items: center;
-    margin: 0 8px;
-}
-
-.bouncing-dots .dot {
-    width: 8px;
-    height: 8px;
-    background: var(--primary-color);
-    border-radius: 50%;
-    animation: bounce-dot 1.4s ease-in-out infinite both;
-}
-
-.bouncing-dots .dot:nth-child(1) { animation-delay: -0.32s; }
-.bouncing-dots .dot:nth-child(2) { animation-delay: -0.16s; }
-.bouncing-dots .dot:nth-child(3) { animation-delay: 0s; }
-
-@keyframes bounce-dot {
-    0%, 80%, 100% { transform: scale(0); }
-    40% { transform: scale(1); }
-}
-
-/* Container/Block Animations */
-.card-hover-scale,
-.container-hover-scale {
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-}
-
-.card-hover-scale:hover,
-.container-hover-scale:hover {
-    /* Removed shadow effects for cleaner appearance */
-    box-shadow: none;
-    -webkit-box-shadow: none;
-    -moz-box-shadow: none;
-}
-
-/* Enhanced Card Styling */
-.card {
+/* ===== THREAD DISPLAY AREA STYLING ===== */
+.thread-display-area {
     background: white;
-    border-radius: var(--radius-lg);
-    padding: var(--spacing-lg);
-    border: 1px solid var(--border-secondary);
-    position: relative;
-    overflow: hidden;
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-    margin-bottom: 8px;
-}
-
-.card:hover {
-    /* Removed shadow effects for cleaner appearance */
-}
-
-/* Card with collapsible functionality */
-.collapsible-card {
-    background: white;
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border-secondary);
-    position: relative;
-    overflow: hidden;
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-    margin-bottom: 8px;
-}
-
-.collapsible-card:hover {
-    /* Removed shadow effects for cleaner appearance */
-}
-
-/* Card header with animated top border */
-.collapsible-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, var(--primary-color) 0%, var(--secondary-color) 100%);
-    opacity: 0;
-    transition: opacity var(--anim-duration-normal) ease;
-}
-
-.collapsible-card:hover::before {
-    opacity: 1;
-}
-
-/* Card header styling */
-.card-header {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-bottom: 1px solid var(--border-secondary);
-    padding: 16px 20px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.card-header:hover {
-    background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
-}
-
-/* Card content styling */
-.card-content {
+    border: none;
     padding: 0;
-    overflow: hidden;
-    transition: max-height var(--anim-duration-normal) var(--anim-easing-cubic);
+    margin: 0;
 }
 
-.card-content.collapsed {
-    max-height: 0;
+/* Remove any default Gradio container styling from thread display */
+.thread-display-area > div,
+.thread-display-area .gradio-html,
+.thread-display-area .gradio-html > div {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
 }
 
-.card-content.expanded {
-    max-height: 2000px;
-}
-
-/* Card content inner padding */
-.card-content-inner {
-    padding: 20px;
-}
-
-/* ===== LEGACY STYLES CLEANUP ===== */
-
-/* ===== BUTTON COMPONENTS ===== */
-/* Override Gradio's primary button styling for action buttons */
-.primary.action-button,
-button.primary.action-button {
-    background: var(--accent-gradient);
-    border: none;
-    color: var(--text-inverse);
-    box-shadow: var(--shadow-sm);
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-}
-
-.primary.action-button:hover,
-button.primary.action-button:hover {
-    background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent-light) 100%);
-    border: none;
-    color: var(--text-inverse);
-    box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
-}
-
-.primary.action-button:active,
-button.primary.action-button:active {
-    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
-    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
-}
-
-/* Apply animations to all buttons */
-button,
-.gradio-button {
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-}
-
-button:hover,
-.gradio-button:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-button:active,
-.gradio-button:active {
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
-}
-
-/* ===== PERSONAL PREFERENCES ===== */
-.personal-preferences {
-    margin-top: 0;
-    opacity: 0.95;
-}
-
-.personal-preferences .gradio-accordion {
-    background: linear-gradient(135deg, #fef7ff 0%, #f3e8ff 100%);
-    border: 1px solid #d8b4fe;
-}
-
-.personal-preferences .gradio-accordion .label-wrap,
-.personal-preferences .gradio-accordion button {
-    background: linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%);
-    color: #7c3aed;
-}
-
-/* ===== AI INSTRUCTIONS STYLING ===== */
-/* Normal editable styling for AI instructions */
-
-/* Preference textarea styling */
-.preference-textarea {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    border-radius: 8px;
-    border: 1px solid #e2e8f0;
-    background-color: #f8fafc;
-}
-    font-weight: 600;
-}
-
-/* ===== DEVELOPMENT SETTINGS ===== */
-.dev-settings {
-    margin-top: 16px;
-    opacity: 0.9;
-}
-
-/* 2-Column Layout Enhancements */
-/* ===== FILE UPLOAD COMPONENTS ===== */
-
-/* Optimize email preview container - single scroll container */
-.email-preview-column .email-preview-container {
-    max-height: 600px;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-/* Right column controls optimization */
-
-/* Draft placeholder styling */
-.draft-placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 250px;
-    padding: 20px;
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border-radius: 0 0 10px 10px;
-}
-
-.draft-placeholder .placeholder-content {
-    text-align: center;
-    max-width: 400px;
-}
-
-.draft-placeholder .placeholder-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-    opacity: 0.7;
-}
-
-.draft-placeholder h3 {
-    margin: 0 0 8px 0;
-    color: #1f2937;
-    font-size: 1.25rem;
-    font-weight: 600;
-}
-
-.draft-placeholder p {
-    margin: 0 0 12px 0;
-    color: #6b7280;
-    font-size: 0.95rem;
-}
-
-.draft-placeholder .placeholder-hint {
-    font-size: 0.85rem;
-    color: #9ca3af;
-    font-style: italic;
-}
-
-/* Email placeholder styling */
-.email-placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 200px;
-    padding: 20px;
-    background: #fafafa;
-    border-radius: 0 0 10px 10px;
-}
-
-.email-placeholder .placeholder-content {
-    text-align: center;
-    max-width: 400px;
-}
-
-.email-placeholder .placeholder-icon {
-    font-size: 48px;
-    margin-bottom: 16px;
-    opacity: 0.6;
-}
-
-.email-placeholder h3 {
-    margin: 0 0 8px 0;
-    color: #374151;
-    font-size: 1.25rem;
-    font-weight: 600;
-}
-
-.email-placeholder p {
-    margin: 0 0 12px 0;
-    color: #6b7280;
-    font-size: 0.95rem;
-}
-
-.email-placeholder .placeholder-hint {
-    font-size: 0.85rem;
-    color: #9ca3af;
-    font-style: italic;
-}
-
-/* Real-time streaming content styling */
-@keyframes draft-appear {
-    0% {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    100% {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* Improved content display areas - fixed scroll bar conflicts */
-.draft-display-area {
-    min-height: 300px;
-    overflow: visible;
-    margin-bottom: 0;
-    padding-bottom: 0;
-}
-
-.original-email-display-area {
-    min-height: 250px;
-    overflow: visible;
-}
-
-/* Remove redundant scrollbar styling to prevent conflicts */
-/* Scrolling will be handled by parent containers only */
-
-/* Accordion styling for progressive disclosure - Enhanced Card-like Design */
-.upload-accordion,
-.draft-accordion,
-.original-accordion,
-.thinking-accordion,
-.key-messages-accordion,
-.personal-preferences,
-.disclaimer,
-.support-feedback,
-.changelog,
-.dev-settings {
-    margin-bottom: 8px;
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border-secondary);
+/* ===== ORIGINAL REFERENCE DISPLAY AREA STYLING ===== */
+.original-reference-display-area {
     background: white;
-    overflow: hidden;
-    position: relative;
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-}
-
-.upload-accordion:hover,
-.draft-accordion:hover,
-.original-accordion:hover,
-.thinking-accordion:hover,
-.key-messages-accordion:hover,
-.personal-preferences:hover,
-.disclaimer:hover,
-.support-feedback:hover,
-.changelog:hover,
-.dev-settings:hover {
-    /* Removed shadow effects for cleaner appearance */
-}
-
-/* Enhanced Card-like Accordion Headers with Animated Top Border */
-.upload-accordion .gradio-accordion-header,
-.draft-accordion .gradio-accordion-header,
-.original-accordion .gradio-accordion-header,
-.thinking-accordion .gradio-accordion-header,
-.key-messages-accordion .gradio-accordion-header,
-.personal-preferences .gradio-accordion-header,
-.disclaimer .gradio-accordion-header,
-.support-feedback .gradio-accordion-header,
-.changelog .gradio-accordion-header,
-.dev-settings .gradio-accordion-header {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
     border: none;
-    border-radius: 0;
-    font-weight: 600;
-    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
-    position: relative;
-    overflow: hidden;
-    padding: 16px 20px;
-}
-
-/* Animated top border effect for all accordion headers */
-.upload-accordion::before,
-.draft-accordion::before,
-.original-accordion::before,
-.thinking-accordion::before,
-.key-messages-accordion::before,
-.personal-preferences::before,
-.disclaimer::before,
-.support-feedback::before,
-.changelog::before,
-.dev-settings::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
-    opacity: 0;
-    transition: opacity var(--anim-duration-normal) ease;
-    z-index: 10;
-}
-
-.upload-accordion:hover::before,
-.draft-accordion:hover::before,
-.original-accordion:hover::before,
-.thinking-accordion:hover::before,
-.key-messages-accordion:hover::before,
-.personal-preferences:hover::before,
-.disclaimer:hover::before,
-.support-feedback:hover::before,
-.changelog:hover::before,
-.dev-settings:hover::before {
-    opacity: 1;
-}
-
-/* Standardized orange gradient for all accordion hover borders */
-.upload-accordion::before,
-.draft-accordion::before,
-.original-accordion::before,
-.thinking-accordion::before,
-.key-messages-accordion::before,
-.personal-preferences::before,
-.disclaimer::before,
-.support-feedback::before,
-.changelog::before,
-.dev-settings::before {
-    background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
-}
-
-/* Accordion content styling */
-.upload-accordion .gradio-accordion-content,
-.draft-accordion .gradio-accordion-content,
-.original-accordion .gradio-accordion-content,
-.thinking-accordion .gradio-accordion-content,
-.key-messages-accordion .gradio-accordion-content,
-.personal-preferences .gradio-accordion-content,
-.disclaimer .gradio-accordion-content,
-.support-feedback .gradio-accordion-content,
-.changelog .gradio-accordion-content,
-.dev-settings .gradio-accordion-content {
-    border: none;
-    border-radius: 0;
     padding: 0;
-    background: white;
+    margin: 0;
 }
 
-/* COMPREHENSIVE SHADOW REMOVAL - Override all possible Gradio default shadows */
-.upload-accordion,
-.draft-accordion,
-.original-accordion,
-.thinking-accordion,
-.key-messages-accordion,
-.personal-preferences,
-.disclaimer,
-.support-feedback,
-.changelog,
-.dev-settings,
-.upload-accordion .gradio-accordion,
-.draft-accordion .gradio-accordion,
-.original-accordion .gradio-accordion,
-.thinking-accordion .gradio-accordion,
-.key-messages-accordion .gradio-accordion,
-.personal-preferences .gradio-accordion,
-.disclaimer .gradio-accordion,
-.support-feedback .gradio-accordion,
-.changelog .gradio-accordion,
-.dev-settings .gradio-accordion,
-.upload-accordion .gradio-accordion:hover,
-.draft-accordion .gradio-accordion:hover,
-.original-accordion .gradio-accordion:hover,
-.thinking-accordion .gradio-accordion:hover,
-.key-messages-accordion .gradio-accordion:hover,
-.personal-preferences .gradio-accordion:hover,
-.disclaimer .gradio-accordion:hover,
-.support-feedback .gradio-accordion:hover,
-.changelog .gradio-accordion:hover,
-.dev-settings .gradio-accordion:hover,
-.upload-accordion .gradio-accordion-header,
-.draft-accordion .gradio-accordion-header,
-.original-accordion .gradio-accordion-header,
-.thinking-accordion .gradio-accordion-header,
-.key-messages-accordion .gradio-accordion-header,
-.personal-preferences .gradio-accordion-header,
-.disclaimer .gradio-accordion-header,
-.support-feedback .gradio-accordion-header,
-.changelog .gradio-accordion-header,
-.dev-settings .gradio-accordion-header,
-.upload-accordion .gradio-accordion-header:hover,
-.draft-accordion .gradio-accordion-header:hover,
-.original-accordion .gradio-accordion-header:hover,
-.thinking-accordion .gradio-accordion-header:hover,
-.key-messages-accordion .gradio-accordion-header:hover,
-.personal-preferences .gradio-accordion-header:hover,
-.disclaimer .gradio-accordion-header:hover,
-.support-feedback .gradio-accordion-header:hover,
-.changelog .gradio-accordion-header:hover,
-.dev-settings .gradio-accordion-header:hover,
-.upload-accordion .gradio-accordion-content,
-.draft-accordion .gradio-accordion-content,
-.original-accordion .gradio-accordion-content,
-.thinking-accordion .gradio-accordion-content,
-.key-messages-accordion .gradio-accordion-content,
-.personal-preferences .gradio-accordion-content,
-.disclaimer .gradio-accordion-content,
-.support-feedback .gradio-accordion-content,
-.changelog .gradio-accordion-content,
-.dev-settings .gradio-accordion-content,
-.upload-accordion .gradio-accordion-content:hover,
-.draft-accordion .gradio-accordion-content:hover,
-.original-accordion .gradio-accordion-content:hover,
-.thinking-accordion .gradio-accordion-content:hover,
-.key-messages-accordion .gradio-accordion-content:hover,
-.personal-preferences .gradio-accordion-content:hover,
-.disclaimer .gradio-accordion-content:hover,
-.support-feedback .gradio-accordion-content:hover,
-.changelog .gradio-accordion-content:hover,
-.dev-settings .gradio-accordion-content:hover,
-.upload-accordion .label-wrap,
-.draft-accordion .label-wrap,
-.original-accordion .label-wrap,
-.thinking-accordion .label-wrap,
-.key-messages-accordion .label-wrap,
-.personal-preferences .label-wrap,
-.disclaimer .label-wrap,
-.support-feedback .label-wrap,
-.changelog .label-wrap,
-.dev-settings .label-wrap,
-.upload-accordion .label-wrap:hover,
-.draft-accordion .label-wrap:hover,
-.original-accordion .label-wrap:hover,
-.thinking-accordion .label-wrap:hover,
-.key-messages-accordion .label-wrap:hover,
-.personal-preferences .label-wrap:hover,
-.disclaimer .label-wrap:hover,
-.support-feedback .label-wrap:hover,
-.changelog .label-wrap:hover,
-.dev-settings .label-wrap:hover,
-.upload-accordion [data-testid="accordion"],
-.draft-accordion [data-testid="accordion"],
-.original-accordion [data-testid="accordion"],
-.thinking-accordion [data-testid="accordion"],
-.key-messages-accordion [data-testid="accordion"],
-.personal-preferences [data-testid="accordion"],
-.disclaimer [data-testid="accordion"],
-.support-feedback [data-testid="accordion"],
-.changelog [data-testid="accordion"],
-.dev-settings [data-testid="accordion"],
-.upload-accordion [data-testid="accordion"]:hover,
-.draft-accordion [data-testid="accordion"]:hover,
-.original-accordion [data-testid="accordion"]:hover,
-.thinking-accordion [data-testid="accordion"]:hover,
-.key-messages-accordion [data-testid="accordion"]:hover,
-.personal-preferences [data-testid="accordion"]:hover,
-.disclaimer [data-testid="accordion"]:hover,
-.support-feedback [data-testid="accordion"]:hover,
-.changelog [data-testid="accordion"]:hover,
-.dev-settings [data-testid="accordion"]:hover,
-.upload-accordion [data-testid="accordion-header"],
-.draft-accordion [data-testid="accordion-header"],
-.original-accordion [data-testid="accordion-header"],
-.thinking-accordion [data-testid="accordion-header"],
-.key-messages-accordion [data-testid="accordion-header"],
-.personal-preferences [data-testid="accordion-header"],
-.disclaimer [data-testid="accordion-header"],
-.support-feedback [data-testid="accordion-header"],
-.changelog [data-testid="accordion-header"],
-.dev-settings [data-testid="accordion-header"],
-.upload-accordion [data-testid="accordion-header"]:hover,
-.draft-accordion [data-testid="accordion-header"]:hover,
-.original-accordion [data-testid="accordion-header"]:hover,
-.thinking-accordion [data-testid="accordion-header"]:hover,
-.key-messages-accordion [data-testid="accordion-header"]:hover,
-.personal-preferences [data-testid="accordion-header"]:hover,
-.disclaimer [data-testid="accordion-header"]:hover,
-.support-feedback [data-testid="accordion-header"]:hover,
-.changelog [data-testid="accordion-header"]:hover,
-.dev-settings [data-testid="accordion-header"]:hover {
-    box-shadow: none;
-    -webkit-box-shadow: none;
-    -moz-box-shadow: none;
-    filter: none;
+/* Remove any default Gradio container styling from original reference display */
+.original-reference-display-area > div,
+.original-reference-display-area .gradio-html,
+.original-reference-display-area .gradio-html > div {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
 }
-
-
-
-
-
-
-
-/* Improved empty state styling */
-.empty-state {
-    transition: all 0.3s ease;
-    border-radius: 8px;
-}
-
-.empty-state:hover {
-    background: rgba(249, 250, 251, 0.8);
-    transform: translateY(-1px);
-}
-
-
 
 
 """
@@ -2249,6 +1465,8 @@ print(f"POE backend healthy: {backend_status['poe']['healthy']}")
 print(f"OpenRouter backend healthy: {backend_status['openrouter']['healthy']}")
 print(f"Current backend: {backend_status['current']}")
 print("Backend initialization complete.")
+
+# ===== FILE PROCESSING FUNCTIONS =====
 
 def validate_file(file):
     try:
@@ -2283,9 +1501,32 @@ def validate_file(file):
 
 
 def html_to_text(html):
+    """
+    Convert HTML content to plain text using html2text library.
+
+    Uses configurable parser selection with performance tracking.
+
+    Args:
+        html (str): HTML content to convert
+
+    Returns:
+        str: Plain text representation of the HTML
+    """
     if not html:
         return ""
-    soup = BeautifulSoup(html, "html.parser")
+
+    # Use the configured parser preference
+    soup, parser_used, parse_time, error = create_soup_with_parser(
+        html, current_parser_preference, "html_to_text"
+    )
+
+    if error:
+        print(f"HTML parsing failed in html_to_text: {error}")
+        return html  # Return original HTML if parsing fails
+
+    if soup is None:
+        return html
+
     clean_html = soup.prettify()
     h = html2text.HTML2Text()
     h.ignore_links = False
@@ -2295,25 +1536,7 @@ def html_to_text(html):
     h.ignore_tables = False
     return h.handle(clean_html)
 
-def html_to_markdown(html):
-    """Convert HTML to markdown for better display"""
-    if not html:
-        return ""
-    
-    # Clean up the HTML first
-    soup = BeautifulSoup(html, "html.parser")
-    
-    # Convert to markdown
-    h = html2text.HTML2Text()
-    h.ignore_links = False
-    h.body_width = 0
-    h.ignore_images = False
-    h.ignore_emphasis = False
-    h.ignore_tables = False
-    h.mark_code = True
-    
-    markdown_text = h.handle(str(soup))
-    return markdown_text
+# ===== EMAIL FORMATTING FUNCTIONS =====
 
 def standardize_date_format(date_input):
     """Standardize date format to match Microsoft Outlook exactly: 'Day, Month DD, YYYY H:MM AM/PM'"""
@@ -2392,7 +1615,7 @@ def standardize_date_format(date_input):
         print(f"Date formatting error: {e}")
         return str(date_input) if date_input else 'Unknown'
 
-
+# ===== EMAIL DISPLAY FUNCTIONS =====
 
 def format_email_preview(email_info):
     """Format email content directly as Outlook-style display without thread parsing"""
@@ -2414,55 +1637,73 @@ def format_email_preview(email_info):
         try:
             from bs4 import BeautifulSoup
             # Parse and clean HTML content while preserving formatting
-            soup = BeautifulSoup(html_body, 'html.parser')
+            # Use configurable parser selection
+            soup, parser_used, parse_time, error = create_soup_with_parser(
+                html_body, current_parser_preference, "format_email_preview"
+            )
 
-            # Remove script tags for security
-            for script in soup.find_all('script'):
-                script.decompose()
+            if error or soup is None:
+                print(f"HTML parsing failed in format_email_preview: {error}")
+                # Fallback to plain text processing
+                if body:
+                    text_lines = body.split('\n')
+                    formatted_lines = []
+                    for line in text_lines:
+                        if line.strip():
+                            formatted_lines.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;">{line}</p>')
+                        else:
+                            formatted_lines.append('<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p>')
+                    body_html = ''.join(formatted_lines)
+                else:
+                    body_html = '<p style="margin: 0; padding: 0; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;"><em>No content</em></p>'
+            else:
+                # Remove script tags for security
+                for script in soup.find_all('script'):
+                    script.decompose()
 
-            # Apply Outlook-compatible styling to all paragraphs
-            for p in soup.find_all('p'):
-                p['style'] = 'margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;'
+                # Apply Outlook-compatible styling to all paragraphs
+                for p in soup.find_all('p'):
+                    p['style'] = 'margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;'
 
-            # Apply Outlook-compatible styling to lists
-            for ul in soup.find_all('ul'):
-                ul['style'] = 'margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;'
+                # Apply Outlook-compatible styling to lists
+                for ul in soup.find_all('ul'):
+                    ul['style'] = 'margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;'
 
-            for ol in soup.find_all('ol'):
-                ol['style'] = 'margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;'
+                for ol in soup.find_all('ol'):
+                    ol['style'] = 'margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;'
 
-            for li in soup.find_all('li'):
-                li['style'] = 'margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;'
+                for li in soup.find_all('li'):
+                    li['style'] = 'margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;'
 
-            # Handle embedded images with cid: references
-            for img in soup.find_all('img'):
-                src = img.get('src', '')
-                if src.startswith('cid:'):
-                    content_id = src.replace('cid:', '')
-                    # Find matching attachment
-                    for attachment in attachments:
-                        if attachment.get('content_id') == content_id:
-                            # Convert to base64 data URL
-                            import base64
-                            file_ext = attachment.get('filename', '').split('.')[-1].lower()
-                            mime_type = {
-                                'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-                                'png': 'image/png', 'gif': 'image/gif',
-                                'bmp': 'image/bmp', 'svg': 'image/svg+xml'
-                            }.get(file_ext, 'image/jpeg')
+                # Handle embedded images with cid: references
+                for img in soup.find_all('img'):
+                    src = img.get('src', '')
+                    if src.startswith('cid:'):
+                        content_id = src.replace('cid:', '')
+                        # Find matching attachment
+                        for attachment in attachments:
+                            if attachment.get('content_id') == content_id:
+                                # Convert to base64 data URL
+                                import base64
+                                file_ext = attachment.get('filename', '').split('.')[-1].lower()
+                                mime_type = {
+                                    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                                    'png': 'image/png', 'gif': 'image/gif',
+                                    'bmp': 'image/bmp', 'svg': 'image/svg+xml'
+                                }.get(file_ext, 'image/jpeg')
 
-                            base64_data = base64.b64encode(attachment.get('data', b'')).decode('utf-8')
-                            data_url = f"data:{mime_type};base64,{base64_data}"
-                            img['src'] = data_url
-                            break
+                                base64_data = base64.b64encode(attachment.get('data', b'')).decode('utf-8')
+                                data_url = f"data:{mime_type};base64,{base64_data}"
+                                img['src'] = data_url
+                                break
 
-                # Ensure images are responsive
-                current_style = img.get('style', '')
-                if 'max-width' not in current_style:
-                    img['style'] = current_style + '; max-width: 100%; height: auto;'
+                    # Ensure images are responsive
+                    current_style = img.get('style', '')
+                    if 'max-width' not in current_style:
+                        img['style'] = current_style + '; max-width: 100%; height: auto;'
 
-            # Get the cleaned HTML content
-            body_html = str(soup)
+                # Get the cleaned HTML content
+                body_html = str(soup)
 
         except Exception as e:
             print(f"Error processing HTML body: {e}")
@@ -2522,37 +1763,54 @@ def format_email_preview(email_info):
     to_display = format_recipients(to_recipients)
     cc_display = format_recipients(cc_recipients)
 
-    # Build header lines in standardized order: From, Sent, To, Cc, Subject
+    # Build header lines in standardized order: Sent, To, Cc, Subject (From removed since it will always be the user)
     header_lines = [
-        f'<div class="email-header-line"><span class="email-header-label">From:</span><span class="email-header-value">{sender}</span></div>',
-        f'<div class="email-header-line"><span class="email-header-label">Sent:</span><span class="email-header-value">{date}</span></div>'
+        f'<div style="margin: 3px 0; font-size: 11pt; display: flex;"><span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Sent:</span><span style="color: #374151;">{date}</span></div>'
     ]
 
     # Add To: field if recipients exist
     if to_recipients:
-        header_lines.append(f'<div class="email-header-line"><span class="email-header-label">To:</span><span class="email-header-value">{to_display}</span></div>')
+        header_lines.append(f'<div style="margin: 3px 0; font-size: 11pt; display: flex;"><span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">To:</span><span style="color: #374151;">{to_display}</span></div>')
 
     # Add Cc: field if recipients exist
     if cc_recipients:
-        header_lines.append(f'<div class="email-header-line"><span class="email-header-label">Cc:</span><span class="email-header-value">{cc_display}</span></div>')
+        header_lines.append(f'<div style="margin: 3px 0; font-size: 11pt; display: flex;"><span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Cc:</span><span style="color: #374151;">{cc_display}</span></div>')
 
     # Add Subject last
-    header_lines.append(f'<div class="email-header-line"><span class="email-header-label">Subject:</span><span class="email-header-value">{subject}</span></div>')
+    header_lines.append(f'<div style="margin: 3px 0; font-size: 11pt; display: flex;"><span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Subject:</span><span style="color: #374151;">{subject}</span></div>')
 
-    # Create simplified email preview with Outlook-style formatting
+    # Create beautiful email preview with inline styling and scroll functionality - 10% height increase
     email_preview = f'''
-    <div class="email-preview-container">
-        <div class="email-thread">
-            <div class="email-item">
-                <div class="email-header">
-                    {"".join(header_lines)}
-                </div>
-                <div class="email-body">
-                    {body_html}
-                </div>
+    <div style="max-height: 550px; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #cbd5e1 #f1f5f9;">
+        <div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; background: white; border: 2px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin: 0;">
+            <!-- Email Header Section -->
+            <div style="background: #f8fafc; border-bottom: 2px solid #e5e7eb; padding: 16px;">
+                {"".join(header_lines)}
+            </div>
+            
+            <!-- Email Body Section -->
+            <div style="padding: 16px; font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000; background: white;">
+                {body_html}
             </div>
         </div>
     </div>
+    <style>
+        /* Custom scrollbar for webkit browsers */
+        .original-reference-display-area div:first-child::-webkit-scrollbar {{
+            width: 6px;
+        }}
+        .original-reference-display-area div:first-child::-webkit-scrollbar-track {{
+            background: #f1f5f9;
+            border-radius: 3px;
+        }}
+        .original-reference-display-area div:first-child::-webkit-scrollbar-thumb {{
+            background: #cbd5e1;
+            border-radius: 3px;
+        }}
+        .original-reference-display-area div:first-child::-webkit-scrollbar-thumb:hover {{
+            background: #94a3b8;
+        }}
+    </style>
     '''
 
     return email_preview
@@ -2736,8 +1994,10 @@ def is_same_email_address(email1, email2):
 
     return normalized_email1 == normalized_email2
 
-def format_draft_preview(reply_text, original_email_info, user_email=""):
-    """Format reply as a draft email preview showing the complete email structure"""
+
+
+def format_complete_email_thread_preview(reply_text, original_email_info, user_email="", user_name=""):
+    """Format complete email thread preview that matches exactly what gets downloaded"""
     try:
         # Get email details
         original_sender = original_email_info.get('sender', 'Unknown')
@@ -2792,45 +2052,64 @@ def format_draft_preview(reply_text, original_email_info, user_email=""):
         # Format To recipient (original sender) with mailto link
         to_display = format_email_links([original_sender]) if original_sender != 'Unknown' else 'Unknown'
 
-        # Create threaded content
+        # Create threaded content exactly as it appears in the download
         threaded_html, _ = create_threaded_email_content(reply_text, original_email_info)
 
-        # Create draft preview with authentic Outlook styling
-        draft_preview = f"""
-<div class="output-panel-container">
-    <div class="draft-preview-item">
-        <div style="margin-bottom: 8px;">
-            <strong style="color: #0078d4; font-size: 1.1em;">📧 Email Draft Preview</strong>
-        </div>
-        <div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; background: white; border: 1px solid #d1d5db; border-radius: 4px; padding: 16px;">
-            <div style="margin-bottom: 12px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
-                <div style="margin: 2px 0; font-size: 11pt;">
-                    <span style="font-weight: bold; color: #000; min-width: 60px; display: inline-block;">To:</span>
-                    <span style="color: #000;">{to_display}</span>
-                </div>
-                <div style="margin: 2px 0; font-size: 11pt;">
-                    <span style="font-weight: bold; color: #000; min-width: 60px; display: inline-block;">Cc:</span>
-                    <span style="color: #000;">{cc_display}</span>
-                </div>
-                <div style="margin: 2px 0; font-size: 11pt;">
-                    <span style="font-weight: bold; color: #000; min-width: 60px; display: inline-block;">Subject:</span>
-                    <span style="color: #000;">{reply_subject}</span>
-                </div>
+        # Use the properly formatted threaded_html content from create_threaded_email_content
+        # This ensures proper HTML rendering like Stage 2
+        
+        # Create complete email thread preview with exact Stage 2 formatting - 10% height increase
+        thread_preview = f"""
+<div style="max-height: 550px; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #cbd5e1 #f1f5f9;">
+    <div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; background: white; border: 2px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin: 0;">
+        <!-- Email Header Section -->
+        <div style="background: #f8fafc; border-bottom: 2px solid #e5e7eb; padding: 16px;">
+            <div style="margin: 3px 0; font-size: 11pt; display: flex;">
+                <span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">From:</span>
+                <span style="color: #374151;">{user_name + ' <' + user_email + '>' if user_name and user_email else 'SARA Compose <sara.compose@example.com>'}</span>
             </div>
-            <div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
-                {threaded_html}
+            <div style="margin: 3px 0; font-size: 11pt; display: flex;">
+                <span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">To:</span>
+                <span style="color: #374151;">{to_display}</span>
+            </div>
+            <div style="margin: 3px 0; font-size: 11pt; display: flex;">
+                <span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Cc:</span>
+                <span style="color: #374151;">{cc_display}</span>
+            </div>
+            <div style="margin: 3px 0; font-size: 11pt; display: flex;">
+                <span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Subject:</span>
+                <span style="color: #374151;">{reply_subject}</span>
             </div>
         </div>
-        <div style="margin-top: 16px; padding: 8px; background: #e7f3ff; border-radius: 4px; font-size: 0.85em; color: #0066cc;">
-            💡 <strong>Ready to send:</strong> Click "📧 Export Draft Email" to download this as a draft email file that you can open in any email client and send directly.
+        
+        <!-- Email Body Section with proper single line spacing -->
+        <div style="padding: 16px; font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000; background: white;">
+            {threaded_html}
         </div>
     </div>
-</div>"""
+</div>
+<style>
+    /* Custom scrollbar for webkit browsers - Stage 3 Draft Email Preview */
+    .thread-display-area div:first-child::-webkit-scrollbar {{
+        width: 6px;
+    }}
+    .thread-display-area div:first-child::-webkit-scrollbar-track {{
+        background: #f1f5f9;
+        border-radius: 3px;
+    }}
+    .thread-display-area div:first-child::-webkit-scrollbar-thumb {{
+        background: #cbd5e1;
+        border-radius: 3px;
+    }}
+    .thread-display-area div:first-child::-webkit-scrollbar-thumb:hover {{
+        background: #94a3b8;
+    }}
+</style>"""
 
-        return draft_preview
+        return thread_preview
 
     except Exception as e:
-        print(f"Error creating draft preview: {e}")
+        print(f"Error creating email thread preview: {e}")
         return format_reply_content(reply_text)
 
 def create_threaded_email_content(reply_text, original_email_info):
@@ -2839,7 +2118,13 @@ def create_threaded_email_content(reply_text, original_email_info):
         from bs4 import BeautifulSoup
 
         # Clean the reply text for both HTML and plain text
-        soup = BeautifulSoup(reply_text, 'html.parser')
+        try:
+            # Try lxml parser first for better performance
+            soup = BeautifulSoup(reply_text, 'lxml')
+        except Exception as e:
+            print(f"lxml parsing failed, falling back to html.parser: {e}")
+            # Fallback to html.parser if lxml fails
+            soup = BeautifulSoup(reply_text, 'html.parser')
         reply_plain_text = soup.get_text().strip()
 
         # Remove any subject line from the plain text reply
@@ -2871,7 +2156,13 @@ def create_threaded_email_content(reply_text, original_email_info):
         # Use HTML body if available for complete content preservation
         if original_html_body:
             # Clean up HTML for email threading while preserving all content
-            soup = BeautifulSoup(original_html_body, 'html.parser')
+            try:
+                # Try lxml parser first for better performance
+                soup = BeautifulSoup(original_html_body, 'lxml')
+            except Exception as e:
+                print(f"lxml parsing failed, falling back to html.parser: {e}")
+                # Fallback to html.parser if lxml fails
+                soup = BeautifulSoup(original_html_body, 'html.parser')
 
             # Remove any script tags for security
             for script in soup.find_all('script'):
@@ -2902,7 +2193,13 @@ def create_threaded_email_content(reply_text, original_email_info):
             formatted_reply_html = clean_reply_html
 
             # Clean up any wrapper divs but preserve inner content formatting
-            soup = BeautifulSoup(formatted_reply_html, 'html.parser')
+            try:
+                # Try lxml parser first for better performance
+                soup = BeautifulSoup(formatted_reply_html, 'lxml')
+            except Exception as e:
+                print(f"lxml parsing failed, falling back to html.parser: {e}")
+                # Fallback to html.parser if lxml fails
+                soup = BeautifulSoup(formatted_reply_html, 'html.parser')
 
             # If wrapped in a single div, extract contents but preserve all inner HTML
             if soup.find('div', class_='reply-content') or soup.find('div', class_='draft-content'):
@@ -2956,15 +2253,11 @@ def create_threaded_email_content(reply_text, original_email_info):
 
             formatted_reply_html = ''.join(formatted_paragraphs)
 
-        # Create threaded content with Microsoft Sans Serif for AI reply using Outlook-compatible spacing
-        threaded_html = f"""
-<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
+        # Create threaded content with Microsoft Sans Serif for AI reply using tight Outlook-compatible spacing (like Stage 2)
+        threaded_html = f"""<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
 {formatted_reply_html}
-<div style="margin: 16px 0;">
-<hr style="border: none; border-top: 1px solid #E1E1E1; margin: 16px 0;">
 </div>
-
-<div style="margin: 0; padding: 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">
+<div style="margin-top: 16px; border-top: 1px solid #E1E1E1; padding-top: 8px; font-family: Calibri, Arial, sans-serif;">
 <p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>From:</strong> {original_sender}</p>
 <p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Sent:</strong> {original_date}</p>"""
 
@@ -3337,31 +2630,39 @@ def process_msg_file(file):
 
                 # Process HTML to preserve embedded images
                 if attachments:
-                    soup = BeautifulSoup(html_body, 'html.parser')
+                    # Use configurable parser selection with performance tracking
+                    soup, parser_used, parse_time, error = create_soup_with_parser(
+                        html_body, current_parser_preference, "MSG embedded images processing"
+                    )
 
-                    # Find all img tags with cid: references
-                    for img in soup.find_all('img'):
-                        src = img.get('src', '')
-                        if src.startswith('cid:'):
-                            content_id = src.replace('cid:', '')
-                            # Find matching attachment
-                            for attachment in attachments:
-                                if attachment['content_id'] == content_id:
-                                    # Convert to base64 data URL
-                                    import base64
-                                    file_ext = attachment['filename'].split('.')[-1].lower()
-                                    mime_type = {
-                                        'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-                                        'png': 'image/png', 'gif': 'image/gif',
-                                        'bmp': 'image/bmp', 'svg': 'image/svg+xml'
-                                    }.get(file_ext, 'image/jpeg')
+                    if error or soup is None:
+                        print(f"HTML parsing failed in MSG processing: {error}")
+                        # Skip image processing if parsing fails
+                        preserved_html_body = html_body
+                    else:
+                        # Find all img tags with cid: references
+                        for img in soup.find_all('img'):
+                            src = img.get('src', '')
+                            if src.startswith('cid:'):
+                                content_id = src.replace('cid:', '')
+                                # Find matching attachment
+                                for attachment in attachments:
+                                    if attachment['content_id'] == content_id:
+                                        # Convert to base64 data URL
+                                        import base64
+                                        file_ext = attachment['filename'].split('.')[-1].lower()
+                                        mime_type = {
+                                            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                                            'png': 'image/png', 'gif': 'image/gif',
+                                            'bmp': 'image/bmp', 'svg': 'image/svg+xml'
+                                        }.get(file_ext, 'image/jpeg')
 
-                                    base64_data = base64.b64encode(attachment['data']).decode('utf-8')
-                                    data_url = f"data:{mime_type};base64,{base64_data}"
-                                    img['src'] = data_url
-                                    break
+                                        base64_data = base64.b64encode(attachment['data']).decode('utf-8')
+                                        data_url = f"data:{mime_type};base64,{base64_data}"
+                                        img['src'] = data_url
+                                        break
 
-                    preserved_html_body = str(soup)
+                        preserved_html_body = str(soup)
 
             except Exception as e:
                 print(f"Warning: Could not process embedded images: {e}")
@@ -3394,97 +2695,157 @@ def process_msg_file(file):
             pass
         return None, f"Failed to process .msg file: {e}\n{tb}"
 
+def create_upload_panel():
+    """Create the full-width upload panel section with expanded interactive area"""
+    with gr.Group(elem_classes=["full-width-upload-panel"], visible=True) as upload_panel:
+        # Single file input that spans the entire panel area
+        file_input = gr.File(
+            label="📧 Drag and drop your email here, or click to upload",
+            file_types=[".msg"],
+            elem_classes=["full-width-file-input"],
+            height=560,  # Doubled height for much more prominent upload area
+            show_label=True
+        )
+
+    return upload_panel, file_input
+
 def create_status_section():
-    """Create the workflow status banner section"""
-    def get_workflow_banner_html(active_stage=1):
-        """Generate the 3-stage workflow banner HTML"""
+    """Create the workflow status banner section with separate clickable components"""
+
+    def get_stage_html(stage_num, title, icon, description, is_active=False, is_clickable=False, is_disabled=False):
+        """Generate HTML for a single stage with support for disabled state"""
+        stage_classes = ["stage"]
+
+        if is_active:
+            stage_classes.append("active")
+        elif is_disabled:
+            stage_classes.append("disabled")
+        elif is_clickable:
+            stage_classes.append("clickable")
+
+        stage_class = " ".join(stage_classes)
+
+        # Only add interactive attributes if clickable and not disabled
+        attrs = ""
+        if is_clickable and not is_disabled:
+            attrs = f'role="button" tabindex="0" aria-label="Go back to {title} stage"'
+        elif is_disabled:
+            attrs = f'aria-disabled="true" aria-label="{title} stage - Complete previous stages to unlock"'
+
         return f"""
-        <div class="status-instructions-panel">
-            <div class="workflow-stages">
-                <div class="stage {'active' if active_stage == 1 else ''}">
-                    <div class="stage-header">
-                        <div class="stage-number">1</div>
-                        <div class="stage-icon">📧</div>
-                        <h3 class="stage-title">Upload Email</h3>
-                    </div>
-                    <div class="stage-description">
-                        Upload your email to get started
-                    </div>
-                </div>
-
-                <div class="stage {'active' if active_stage == 2 else ''}">
-                    <div class="stage-header">
-                        <div class="stage-number">2</div>
-                        <div class="stage-icon">✍️</div>
-                        <h3 class="stage-title">Add Key Messages</h3>
-                    </div>
-                    <div class="stage-description">
-                        Enter your key points and let SARA craft your reply
-                    </div>
-                </div>
-
-                <div class="stage {'active' if active_stage == 3 else ''}">
-                    <div class="stage-header">
-                        <div class="stage-number">3</div>
-                        <div class="stage-icon">📋</div>
-                        <h3 class="stage-title">Review & Download</h3>
-                    </div>
-                    <div class="stage-description">
-                        Review, download, or refine your draft with SARA
-                    </div>
-                </div>
+        <div class="{stage_class}" {attrs}>
+            <div class="stage-header">
+                <div class="stage-number">{stage_num}</div>
+                <div class="stage-icon">{icon}</div>
+                <h3 class="stage-title">{title}</h3>
+            </div>
+            <div class="stage-description">
+                {description}
             </div>
         </div>
         """
 
-    status_instructions = gr.HTML(
-        value=get_workflow_banner_html(1),
-        elem_id="status-instructions"
-    )
+    # Create the banner container with separate stage components arranged horizontally
+    with gr.Group(elem_id="status-instructions", elem_classes=["borderless-group"]) as status_banner:
+        gr.HTML("""<div class="status-instructions-panel"><div class="workflow-stages">""")
 
-    return status_instructions, get_workflow_banner_html
+        # Arrange the three stage buttons horizontally in a single row
+        with gr.Row():
+            # Stage 1 - Upload Email
+            stage1_html = gr.HTML(
+                value=get_stage_html(1, "Upload Email", "📧", "Upload your email to get started", is_active=True),
+                elem_id="stage1-banner"
+            )
+
+            # Stage 2 - Add Key Messages
+            stage2_html = gr.HTML(
+                value=get_stage_html(2, "Add Key Messages", "✍️", "Enter your key points and let SARA craft your reply"),
+                elem_id="stage2-banner"
+            )
+
+            # Stage 3 - Review & Revise
+            stage3_html = gr.HTML(
+                value=get_stage_html(3, "Review & Revise", "📋", "Review, revise, and download your draft when ready"),
+                elem_id="stage3-banner"
+            )
+
+        gr.HTML("""</div></div>""")
+
+    def update_stage_banners(active_stage, unlocked_stages=None):
+        """Update all stage banners based on current active stage and unlocked stages"""
+        # Default unlocked stages if not provided (for backward compatibility)
+        if unlocked_stages is None:
+            unlocked_stages = [1]  # Only Stage 1 unlocked by default
+
+        # Determine clickability and disabled state based on workflow progression
+        stage1_clickable = active_stage > 1 and 1 in unlocked_stages
+        stage1_disabled = 1 not in unlocked_stages
+
+        stage2_clickable = active_stage > 2 and 2 in unlocked_stages
+        stage2_disabled = 2 not in unlocked_stages
+
+        stage3_clickable = False  # Stage 3 is never clickable (end of workflow)
+        stage3_disabled = 3 not in unlocked_stages
+
+        # Generate updated HTML for each stage
+        stage1_update = gr.update(value=get_stage_html(
+            1, "Upload Email", "📧", "Upload your email to get started",
+            is_active=(active_stage == 1),
+            is_clickable=stage1_clickable,
+            is_disabled=stage1_disabled
+        ))
+
+        stage2_update = gr.update(value=get_stage_html(
+            2, "Add Key Messages", "✍️", "Enter your key points and let SARA craft your reply",
+            is_active=(active_stage == 2),
+            is_clickable=stage2_clickable,
+            is_disabled=stage2_disabled
+        ))
+
+        stage3_update = gr.update(value=get_stage_html(
+            3, "Review & Revise", "📋", "Review, revise, and download your draft when ready",
+            is_active=(active_stage == 3),
+            is_clickable=stage3_clickable,
+            is_disabled=stage3_disabled
+        ))
+
+        return stage1_update, stage2_update, stage3_update
+
+    def get_banner_updates_for_stage(stage, unlocked_stages=None):
+        """Helper function to get banner updates for a specific stage"""
+        return update_stage_banners(stage, unlocked_stages)
+
+    # Compatibility function for existing code that expects single banner HTML
+    def get_workflow_banner_html(active_stage=1, unlocked_stages=None):
+        """Compatibility function - returns banner updates for the new system"""
+        return update_stage_banners(active_stage, unlocked_stages)
+
+    return status_banner, stage1_html, stage2_html, stage3_html, update_stage_banners, get_banner_updates_for_stage, get_workflow_banner_html
 
 def create_left_column():
     """Create the left column components for email preview, thinking process, and draft response sections"""
-    # File Upload Accordion - Open by default
-    with gr.Accordion("📧 Upload Email File", open=True, elem_classes=["upload-accordion"]) as upload_accordion:
-        file_input = gr.File(
-            label="Select .msg email file or drag & drop here",
-            file_types=[".msg"],
-            elem_classes=["integrated-file-upload"]
-        )
-
     # SARA Thinking Process Accordion - Moved between Upload and Draft Response
-    with gr.Accordion("💭 SARA Thinking Process", open=False, visible=False, elem_classes=["thinking-accordion", "container-hover-scale"]) as think_accordion:
+    with gr.Accordion("💭 SARA Thinking Process", open=False, visible=False) as think_accordion:
         think_output = gr.Markdown(value="")
 
-    # Draft Preview Accordion - Closed by default, opens during generation
-    with gr.Accordion("📝 SARA Draft Response", open=False, visible=False, elem_classes=["draft-accordion", "container-hover-scale"]) as draft_accordion:
-        draft_preview = gr.HTML(
+    # Draft Email Preview Container - Non-collapsible without header
+    with gr.Group(visible=False) as thread_preview_accordion:
+        thread_preview = gr.HTML(
             value="""
-            <div class='draft-placeholder'>
+            <div class='thread-placeholder'>
                 <div class='placeholder-content'>
-                    <div class='placeholder-icon'>✍️</div>
-                    <h3>SARA Draft Will Appear Here</h3>
-                    <p>Upload an email and generate a response to see your SARA-composed draft</p>
+                    <div class='placeholder-icon'>📧</div>
+                    <h3>Draft Email Preview Will Appear Here</h3>
+                    <p>Upload an email and generate a response to see your draft email exactly as you'll download it</p>
                 </div>
             </div>
             """,
-            elem_classes=["draft-display-area"]
+            elem_classes=["thread-display-area", "email-panel-container"]
         )
 
-        # Custom download button component - appears when email is generated
-        download_button = gr.DownloadButton(
-            label="📥 Download Draft Email",
-            visible=False,
-            variant="primary",
-            size="lg",
-            elem_classes=["custom-download-button", "draft-download-button", "btn-hover-scale", "btn-press-animation"]
-        )
-
-    # Original Email Accordion - Hidden by default, becomes visible after email upload
-    with gr.Accordion("📧 Original Email", open=False, visible=False, elem_classes=["original-accordion", "container-hover-scale"]) as original_accordion:
-        original_email_display = gr.HTML(
+    # Uploaded Email Display Container - Non-collapsible without header
+    with gr.Group(visible=False) as original_reference_accordion:
+        original_reference_display = gr.HTML(
             value="""
             <div class='email-placeholder'>
                 <div class='placeholder-content'>
@@ -3494,44 +2855,32 @@ def create_left_column():
                 </div>
             </div>
             """,
-            elem_classes=["original-email-display-area"]
+            elem_classes=["original-reference-display-area", "email-panel-container"]
         )
 
     return {
-        'file_input': file_input,
-        'upload_accordion': upload_accordion,
         'think_accordion': think_accordion,
         'think_output': think_output,
-        'draft_accordion': draft_accordion,
-        'draft_preview': draft_preview,
-        'download_button': download_button,
-        'original_accordion': original_accordion,
-        'original_email_display': original_email_display
+        'thread_preview_accordion': thread_preview_accordion,
+        'thread_preview': thread_preview,
+        'original_reference_accordion': original_reference_accordion,
+        'original_reference_display': original_reference_display
     }
 
-def create_right_column():
-    """Create the right column components for controls, preferences, and development settings"""
-    # Top Section - Input Controls with Key Messages Accordion (Hidden by default, entire container)
-    with gr.Accordion("📝 Key Messages", open=False, visible=False, elem_classes=["key-messages-accordion", "container-hover-scale"]) as key_messages_accordion:
-        key_messages = gr.Textbox(
-            label="",
-            placeholder="Enter the key messages you want to include in your reply...\n\nExample:\n• Thank them for their inquiry\n• Confirm the meeting time\n• Provide additional resources",
-            lines=6,
-            max_lines=12,
-            show_label=False
-        )
+def create_sidebar():
+    """Create the left sidebar with description, preferences, and information sections"""
 
-        # Generate button inside accordion - closer to input
-        generate_btn = gr.Button(
-            "🚀 Generate Reply",
-            interactive=True,
-            size="lg",
-            variant="primary",
-            elem_classes=["action-button", "generate-button-inline", "btn-hover-scale", "btn-press-animation"]
-        )
+    # Description Header Section
+    gr.HTML("""
+    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);">
+        <p style="margin: 0; color: #374151; line-height: 1.6; font-size: 0.9rem; text-align: left;">
+            <strong>SARA Compose</strong> is an email drafting assistant developed by <strong>RD</strong>, designed to handle confidential materials and protect user privacy.
+        </p>
+    </div>
+    """)
 
-    # Personal Preferences Section - New section above Development Settings
-    with gr.Accordion("👤 Personal Preferences", open=False, elem_classes=["personal-preferences", "container-hover-scale"], elem_id="personal-preferences-accordion"):
+    # Personal Preferences Section
+    with gr.Accordion("👤 Personal Preferences", open=False):
         with gr.Group():
             gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>User Identity</h4>")
             user_name = gr.Textbox(
@@ -3539,16 +2888,14 @@ def create_right_column():
                 placeholder="Enter your full name...",
                 value="Max Kwong",
                 interactive=True,
-                elem_id="user-name-input",
-                elem_classes=["preference-input"]
+                elem_id="user-name-input"
             )
             user_email = gr.Textbox(
                 label="Your Email Address",
                 placeholder="Enter your email address...",
                 value="mwmkwong@hkma.gov.hk",
                 interactive=True,
-                elem_id="user-email-input",
-                elem_classes=["preference-input"]
+                elem_id="user-email-input"
             )
 
         with gr.Group():
@@ -3560,16 +2907,14 @@ def create_right_column():
                 placeholder="Enter the complete instructions that will be sent to the AI model...",
                 lines=12,
                 max_lines=20,
-                interactive=True,  # Always editable
+                interactive=True,
                 info="These are the exact instructions sent to the AI model. You have complete control over how the AI behaves. Only your identity context is added automatically.",
-                elem_id="ai-instructions-textarea",
-                elem_classes=["preference-textarea"]
+                elem_id="ai-instructions-textarea"
             )
 
             # Restore Default Instructions button
             restore_default_btn = gr.Button(
                 "🔄 Restore Default Instructions",
-                elem_classes=["action-button", "btn-hover-scale", "btn-press-animation"],
                 size="sm",
                 variant="primary"
             )
@@ -3577,10 +2922,8 @@ def create_right_column():
             # Hidden HTML component for visual feedback
             restore_feedback = gr.HTML(visible=False)
 
-
-
     # Disclaimer Section
-    with gr.Accordion("⚠️ Disclaimer", open=False, elem_classes=["disclaimer", "container-hover-scale"]):
+    with gr.Accordion("⚠️ Disclaimer", open=False):
         gr.HTML("""
         <div style="padding: 16px;">
             <p style="margin: 0; color: #6b7280; line-height: 1.6; font-size: 0.85rem;">
@@ -3590,48 +2933,48 @@ def create_right_column():
         """)
 
     # Support & Feedback Section
-    with gr.Accordion("📞 Support & Feedback", open=False, elem_classes=["support-feedback", "container-hover-scale"]):
+    with gr.Accordion("📞 Support & Feedback", open=False):
         gr.HTML("""
         <div style="padding: 16px;">
             <p style="margin-bottom: 16px; color: #374151; line-height: 1.6;">
                 If you have any comments or need assistance regarding the tool, please don't hesitate to contact us:
             </p>
-            <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+            <table style="width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; font-size: 0.85rem;">
                 <thead>
                     <tr style="background-color: #f8fafc;">
-                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Name</th>
-                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Post</th>
-                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Extension</th>
+                        <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Name</th>
+                        <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Post</th>
+                        <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Extension</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">Max Kwong</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">SM(RD)</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">1673</td>
-                    </tr>
-                    <tr style="background-color: #f9fafb;">
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">Oscar So</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">M(RD)1</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">0858</td>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">Max Kwong</td>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">SM(RD)</td>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">1673</td>
                     </tr>
                     <tr>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">Maggie Poon</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">AM(RD)1</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">0746</td>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">Oscar So</td>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">M(RD)1</td>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">0858</td>
                     </tr>
-                    <tr style="background-color: #f9fafb;">
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">Cynwell Lau</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">AM(RD)3</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">0460</td>
+                    <tr>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">Maggie Poon</td>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">AM(RD)1</td>
+                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">0746</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px 12px;">Cynwell Lau</td>
+                        <td style="padding: 8px 12px;">AM(RD)3</td>
+                        <td style="padding: 8px 12px;">0460</td>
                     </tr>
                 </tbody>
             </table>
         </div>
         """)
 
-    # Changelog Section
-    with gr.Accordion("📌 Changelog", open=False, elem_classes=["changelog", "container-hover-scale"]):
+    # Changelog Section with corrected content
+    with gr.Accordion("📌 Changelog", open=False):
         gr.HTML("""
         <div style="padding: 16px;">
             <table style="width: 100%; border-collapse: collapse;">
@@ -3644,17 +2987,17 @@ def create_right_column():
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">07-07-2025</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">2025-07-07</td>
                         <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">1.0</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">• Initial release</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">• First release</td>
                     </tr>
                 </tbody>
             </table>
         </div>
         """)
 
-    # Bottom Section - Development Settings (moved to bottom for better UX hierarchy)
-    with gr.Accordion("⚙️ Development Settings", open=False, elem_classes=["dev-settings", "container-hover-scale"]):
+    # Development Settings Section
+    with gr.Accordion("⚙️ Development Settings", open=False):
         with gr.Group():
             gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>AI Backend Configuration</h4>")
 
@@ -3662,7 +3005,7 @@ def create_right_column():
             backend_selector = gr.Dropdown(
                 label="AI Backend",
                 choices=["poe", "openrouter"],
-                value="poe",  # Default to POE
+                value="poe",  # Default to POE (GPT-4o priority)
                 interactive=True,
                 info="Select the AI backend provider"
             )
@@ -3686,10 +3029,24 @@ def create_right_column():
                 info="Maximum tokens for email content sent to AI (longer emails will be truncated)"
             )
 
+            gr.HTML("<h4 style='margin: 16px 0 12px 0; color: #64748b; font-size: 0.9rem;'>Email Parser Configuration</h4>")
+
+            # HTML Parser selection
+            parser_selector = gr.Dropdown(
+                label="HTML Parser",
+                choices=HTML_PARSER_OPTIONS,
+                value=DEFAULT_PARSER_CHOICE,
+                interactive=True,
+                info="Select HTML parser for email processing. Auto mode tries lxml first, then falls back to html.parser."
+            )
+
+            # Parser performance display
+            parser_info = gr.HTML(
+                value="<div style='color: #6b7280; font-size: 0.85rem; margin-top: 8px;'>Parser performance information will appear here after processing emails.</div>",
+                visible=True
+            )
+
     return {
-        'key_messages_accordion': key_messages_accordion,
-        'key_messages': key_messages,
-        'generate_btn': generate_btn,
         'user_name': user_name,
         'user_email': user_email,
         'ai_instructions': ai_instructions,
@@ -3697,12 +3054,51 @@ def create_right_column():
         'restore_feedback': restore_feedback,
         'backend_selector': backend_selector,
         'model_selector': model_selector,
-        'email_token_limit': email_token_limit
+        'email_token_limit': email_token_limit,
+        'parser_selector': parser_selector,
+        'parser_info': parser_info
     }
 
-with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") as demo:
+def create_right_column():
+    """Create the right column components for controls, preferences, and development settings"""
+    # Key Messages Input - Using built-in label feature
+    key_messages = gr.Textbox(
+        label="📝 Key Messages",
+        placeholder="Enter the key messages you want to include in your reply...\n\nExample:\n• Thank them for their inquiry\n• Confirm the meeting time\n• Provide additional resources",
+        lines=21.5,
+        max_lines=30,
+        show_label=True,
+        visible=False
+    )
+
+    # Action buttons outside accordion for cleaner visual hierarchy
+    with gr.Row():
+        generate_btn = gr.Button(
+            "🚀 Generate Reply",
+            interactive=True,
+            size="lg",
+            variant="primary",
+            visible=False,  # Hidden until key messages accordion is visible
+            elem_classes=["action-button"]
+        )
+
+        download_button = gr.DownloadButton(
+            label="📥 Download Draft",
+            visible=False,
+            variant="primary",
+            size="lg",
+            elem_classes=["download-button"]
+        )
+
+    return {
+        'key_messages': key_messages,
+        'generate_btn': generate_btn,
+        'download_button': download_button
+    }
+
+with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
     # Create status section components
-    status_instructions, get_workflow_banner_html = create_status_section()
+    status_banner, stage1_html, stage2_html, stage3_html, update_stage_banners, get_banner_updates_for_stage, get_workflow_banner_html = create_status_section()
 
     # Simplified localStorage persistence using Gradio BrowserState
     # This is more reliable than complex JavaScript
@@ -3718,34 +3114,43 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
 
 
 
-    with gr.Row(elem_classes=["main-layout-row"]):
-        # Left column - Redesigned with collapsible accordions for progressive disclosure
-        with gr.Column(scale=3, elem_classes=["email-preview-column"]):
+    # Status instructions panel - spans full width above main content
+    status_banner
+
+    # Full-width upload panel - spans full width below status banner
+    upload_panel, file_input = create_upload_panel()
+
+    with gr.Row():
+        # Left sidebar - Information sections, preferences, and settings
+        with gr.Sidebar(position="left", width=600, open=True):
+            sidebar_components = create_sidebar()
+            user_name = sidebar_components['user_name']
+            user_email = sidebar_components['user_email']
+            ai_instructions = sidebar_components['ai_instructions']
+            restore_default_btn = sidebar_components['restore_default_btn']
+            restore_feedback = sidebar_components['restore_feedback']
+            backend_selector = sidebar_components['backend_selector']
+            model_selector = sidebar_components['model_selector']
+            email_token_limit = sidebar_components['email_token_limit']
+            parser_selector = sidebar_components['parser_selector']
+            parser_info = sidebar_components['parser_info']
+
+        # Middle column - Email preview and draft display
+        with gr.Column(scale=2):
             left_components = create_left_column()
-            file_input = left_components['file_input']
-            upload_accordion = left_components['upload_accordion']
             think_accordion = left_components['think_accordion']
             think_output = left_components['think_output']
-            draft_accordion = left_components['draft_accordion']
-            draft_preview = left_components['draft_preview']
-            download_button = left_components['download_button']
-            original_accordion = left_components['original_accordion']
-            original_email_display = left_components['original_email_display']
+            thread_preview_accordion = left_components['thread_preview_accordion']
+            thread_preview = left_components['thread_preview']
+            original_reference_accordion = left_components['original_reference_accordion']
+            original_reference_display = left_components['original_reference_display']
 
-        # Right column - All controls and output (optimized workflow)
-        with gr.Column(scale=2, elem_classes=["rhs-controls-column"]):
+        # Right column - Key messages and generation controls
+        with gr.Column(scale=1):
             right_components = create_right_column()
-            key_messages_accordion = right_components['key_messages_accordion']
             key_messages = right_components['key_messages']
             generate_btn = right_components['generate_btn']
-            user_name = right_components['user_name']
-            user_email = right_components['user_email']
-            ai_instructions = right_components['ai_instructions']
-            restore_default_btn = right_components['restore_default_btn']
-            restore_feedback = right_components['restore_feedback']
-            backend_selector = right_components['backend_selector']
-            model_selector = right_components['model_selector']
-            email_token_limit = right_components['email_token_limit']
+            download_button = right_components['download_button']
 
 
 
@@ -3755,6 +3160,13 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
     current_reply = gr.State("")
     current_think = gr.State("")
     current_email_info = gr.State({})
+    current_stage = gr.State(1)  # Track current workflow stage (1, 2, or 3)
+    unlocked_stages = gr.State([1])  # Track which stages are unlocked (starts with only Stage 1)
+
+    # Multi-turn conversation state
+    conversation_history = gr.State([])
+    is_revision_mode = gr.State(False)
+    initial_key_messages = gr.State("")
 
 
 
@@ -3798,25 +3210,43 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
 
 
     def on_backend_change(backend_type):
-        """Handle backend selection change and update model choices"""
+        """Handle backend selection change and update model choices with validation"""
         try:
             # Update the backend manager
             backend_manager.set_backend(backend_type)
 
-            # Get available models for the selected backend
+            # Get available models for the selected backend (with dynamic validation)
             available_models = backend_manager.get_available_models()
 
-            # Set default model based on backend
-            if backend_type == "openrouter":
-                default_model = "deepseek/deepseek-r1-distill-qwen-32b:free"
-            else:  # poe
-                default_model = "GPT-4o"
+            if not available_models:
+                print(f"No models available for {backend_type} backend")
+                # Fallback to POE if OpenRouter has no models
+                if backend_type == "openrouter":
+                    return gr.update(
+                        choices=POE_MODELS,
+                        value="GPT-4o",
+                        info="OpenRouter models unavailable - falling back to POE API"
+                    )
+                else:
+                    return gr.update(
+                        choices=POE_MODELS,
+                        value="GPT-4o",
+                        info="No models available for selected backend"
+                    )
 
-            # Return updated dropdown
+            # Get default model and validate it's available
+            default_model = get_default_model(backend_type)
+            if default_model not in available_models:
+                # Use first available model if default is not available
+                default_model = available_models[0]
+                print(f"Default model not available, using {default_model}")
+
+            # Return updated dropdown with validated models
+            model_count = len(available_models)
             return gr.update(
                 choices=available_models,
                 value=default_model,
-                info=f"Select the AI model for email generation (powered by {backend_type.upper()} API)"
+                info=f"Select the AI model for email generation (powered by {backend_type.upper()} API) - {model_count} models available"
             )
         except Exception as e:
             print(f"Error changing backend: {e}")
@@ -3824,16 +3254,71 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
             return gr.update(
                 choices=POE_MODELS,
                 value="GPT-4o",
-                info="Select the AI model for email generation (powered by POE API)"
+                info="Error loading models - falling back to POE API"
             )
 
     def validate_backend_model_compatibility(backend_type, model):
-        """Validate that the selected model is compatible with the backend"""
-        if backend_type == "poe":
-            return model in POE_MODELS
-        elif backend_type == "openrouter":
-            return model in OPENROUTER_MODELS
-        return False
+        """Validate that the selected model is compatible with the backend using dynamic validation"""
+        return validate_model_selection(backend_type, model)
+
+    def on_model_change(backend_type, model):
+        """Handle model selection change with validation and fallback"""
+        try:
+            # Validate the selected model
+            if not validate_model_selection(backend_type, model):
+                print(f"Model {model} is not available for {backend_type}")
+
+                # Get fallback model
+                fallback_model = get_fallback_model(backend_type, model)
+                if fallback_model:
+                    print(f"Falling back to {fallback_model}")
+                    return gr.update(
+                        value=fallback_model,
+                        info=f"Model {model} unavailable - switched to {fallback_model}"
+                    )
+                else:
+                    print(f"No fallback model available for {backend_type}")
+                    return gr.update(
+                        info=f"Model {model} is not available"
+                    )
+            else:
+                # Model is valid
+                return gr.update(
+                    info=f"Model {model} is ready for use"
+                )
+        except Exception as e:
+            print(f"Error validating model selection: {e}")
+            return gr.update(
+                info="Error validating model selection"
+            )
+
+    def on_parser_change(parser_choice):
+        """Handle HTML parser selection change"""
+        global current_parser_preference
+        try:
+            current_parser_preference = parser_choice
+            print(f"Parser preference changed to: {parser_choice}")
+
+            # Test the parser selection with a simple HTML snippet
+            test_html = "<p>Test HTML parsing</p>"
+            soup, parser_used, parse_time, error = create_soup_with_parser(
+                test_html, parser_choice, "parser_test"
+            )
+
+            if error:
+                return gr.update(
+                    value=f"<div style='color: #ef4444; font-size: 0.85rem; margin-top: 8px;'>❌ {error}</div>"
+                )
+            else:
+                performance_info = get_parser_performance_info(parser_used, parse_time)
+                return gr.update(
+                    value=f"<div style='color: #10b981; font-size: 0.85rem; margin-top: 8px;'>{performance_info} - Parser ready for use</div>"
+                )
+        except Exception as e:
+            print(f"Error changing parser: {e}")
+            return gr.update(
+                value=f"<div style='color: #ef4444; font-size: 0.85rem; margin-top: 8px;'>❌ Error: {str(e)}</div>"
+            )
 
     def get_backend_health_info():
         """Get detailed backend health information for UI display"""
@@ -3863,11 +3348,11 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
 
     def extract_and_display_email(file):
         if not file:
-            # Reset status instructions to initial state (Stage 1)
-            initial_status_html = get_workflow_banner_html(1)
+            # Reset status banners to initial state (Stage 1) - only Stage 1 unlocked
+            stage1_update, stage2_update, stage3_update = update_stage_banners(1, [1])
 
             return (
-                gr.update(visible=True),  # Keep file input visible
+                gr.update(visible=True),  # Keep upload panel visible
                 """
                 <div class='email-placeholder'>
                     <div class='placeholder-content'>
@@ -3878,20 +3363,24 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                     </div>
                 </div>
                 """,
-                gr.update(open=True),   # Keep upload accordion open
-                gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
-                gr.update(open=False, visible=False),  # Hide key messages accordion when no file
+                gr.update(visible=False),  # Keep original reference group hidden
+                                    gr.update(visible=False),  # Hide key messages container when no file
                 {},
-                initial_status_html     # Reset status instructions
+                stage1_update,    # Update stage 1 banner
+                stage2_update,    # Update stage 2 banner
+                stage3_update,    # Update stage 3 banner
+                gr.update(visible=False),  # Hide generate button when no file
+                1,  # Reset to Stage 1
+                [1]  # Only Stage 1 unlocked
             )
 
         info, error = process_msg_file(file)
         if error:
-            # Error status - stay on Stage 1
-            error_status_html = get_workflow_banner_html(1)
+            # Error status - stay on Stage 1, only Stage 1 unlocked
+            stage1_update, stage2_update, stage3_update = update_stage_banners(1, [1])
 
             return (
-                gr.update(visible=True),  # Keep file input visible for retry
+                gr.update(visible=True),  # Keep upload panel visible for retry
                 """
                 <div class='email-placeholder'>
                     <div class='placeholder-content'>
@@ -3902,26 +3391,34 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                     </div>
                 </div>
                 """,
-                gr.update(open=True),   # Keep upload accordion open for retry
-                gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
-                gr.update(open=False, visible=False),  # Hide key messages accordion on error
+                gr.update(visible=False),  # Keep original reference group hidden
+                                    gr.update(visible=False),  # Hide key messages container on error
                 {},
-                error_status_html       # Show error status
+                stage1_update,      # Update stage 1 banner
+                stage2_update,      # Update stage 2 banner
+                stage3_update,      # Update stage 3 banner
+                gr.update(visible=False),  # Hide generate button on error
+                1,  # Stay on Stage 1
+                [1]  # Only Stage 1 unlocked
             )
 
-        # Success status - move to Stage 2
-        success_status_html = get_workflow_banner_html(2)
+        # Success status - move to Stage 2, unlock Stages 1 and 2
+        stage1_update, stage2_update, stage3_update = update_stage_banners(2, [1, 2])
 
         preview_html = format_email_preview(info)
-        # After successful email upload: display email content and hide upload section
+        # After successful email upload: display email content and auto-expand email panel for immediate preview
         return (
-            gr.update(visible=True),    # Keep file input visible
+            gr.update(visible=False),   # Hide upload panel after successful upload to reduce clutter at Stage 2
             preview_html,               # Original email display
-            gr.update(open=False, visible=False),  # Hide upload accordion after successful upload
-            gr.update(open=True, visible=True),    # Make original email accordion visible and open to show content
-            gr.update(open=True, visible=True),    # Make key messages accordion visible and open after successful upload
+            gr.update(visible=True),    # Make original reference group visible for immediate preview
+            gr.update(visible=True),    # Make key messages container visible after successful upload
             info,                       # Current email info state
-            success_status_html         # Show success status
+            stage1_update,              # Update stage 1 banner
+            stage2_update,              # Update stage 2 banner
+            stage3_update,              # Update stage 3 banner
+            gr.update(visible=True),    # Show generate button when key messages accordion is visible
+            2,  # Move to Stage 2
+            [1, 2]  # Stages 1 and 2 unlocked
         )
 
 
@@ -3950,18 +3447,128 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
             print(f"Auto-export error: {str(e)}")
             return gr.update(visible=False, value=None)
 
+    def handle_download_click(reply_text, email_info, user_email="", user_name=""):
+        """Handle download button click - generate and return file for download"""
+        try:
+            if not reply_text or not reply_text.strip():
+                return None
+
+            file_path, error = export_reply_to_msg(reply_text, email_info, user_email, user_name)
+
+            if error:
+                print(f"Download error: {error}")
+                return None
+
+            if file_path and os.path.exists(file_path):
+                print(f"Download successful: {file_path}")
+                return file_path
+            else:
+                print("Download failed: No file created")
+                return None
+
+        except Exception as e:
+            print(f"Download error: {str(e)}")
+            return None
+
     def copy_to_clipboard_js(reply_text):
         """Simplified for Hugging Face Spaces deployment"""
         # Return empty string to avoid JavaScript issues
-        _ = reply_text  # Acknowledge parameter to avoid warning
+        _ = reply_text # Acknowledge parameter to avoid warning
         return ""
 
-    def validate_inputs(file, key_msgs, model):
+
+    def validate_inputs(file, key_msgs, model, backend_type="poe"):
+        """Validate inputs including model availability"""
         if not file or not key_msgs or not model:
             return gr.update(interactive=False)
+
+        # Additional validation: check if model is available for current backend
+        if not validate_model_selection(backend_type, model):
+            print(f"Model {model} not available for {backend_type} backend")
+            return gr.update(interactive=False)
+
+        return gr.update(interactive=True)
+
+    def validate_revision_inputs(file, key_msgs, model, backend_type, is_revision_mode):
+        """Validate inputs specifically for revision mode - button should be disabled when revision text is empty"""
+        if not file or not model:
+            return gr.update(interactive=False)
+
+        # In revision mode, key_msgs should not be empty (revision instructions required)
+        # In initial mode, use the standard validation
+        if is_revision_mode:
+            if not key_msgs or not key_msgs.strip():
+                return gr.update(interactive=False)
+        else:
+            if not key_msgs:
+                return gr.update(interactive=False)
+
+        # Additional validation: check if model is available for current backend
+        if not validate_model_selection(backend_type, model):
+            print(f"Model {model} not available for {backend_type} backend")
+            return gr.update(interactive=False)
+
         return gr.update(interactive=True)
 
 
+
+    def update_ui_for_revision_mode(is_revision):
+        """Update UI components based on revision mode state"""
+        if is_revision:
+            # Revision mode: change label and button text
+            label_text = "✏️ Revision Instructions"
+            button_text = "🔄 Revise Draft"
+            placeholder_text = "Enter your revision instructions...\n\nExample:\n• Make the tone more formal\n• Add information about next steps\n• Shorten the response"
+        else:
+            # Initial mode: original key messages setup
+            label_text = "📝 Key Messages"
+            button_text = "🚀 Generate Reply"
+            placeholder_text = "Enter the key messages you want to include in your reply...\n\nExample:\n• Thank them for their inquiry\n• Confirm the meeting time\n• Provide additional resources"
+
+        return label_text, button_text, placeholder_text
+
+    def build_conversation_history(email_info, conversation_history, new_user_input, user_name="", ai_instructions="", email_token_limit=2000):
+        """Build conversation history for multi-turn interactions"""
+
+        # If this is the first turn, create initial conversation
+        if not conversation_history:
+            # Build system message with email context
+            recipient_info = ""
+            to_recipients = email_info.get('to_recipients', [])
+            cc_recipients = email_info.get('cc_recipients', [])
+
+            if to_recipients:
+                recipient_info += f"To: {', '.join(to_recipients)}\n"
+            if cc_recipients:
+                recipient_info += f"Cc: {', '.join(cc_recipients)}\n"
+
+            # Truncate email content if needed
+            email_body = truncate_email_content(email_info['body'], email_token_limit)
+
+            # User identity context
+            user_identity_context = ""
+            if user_name:
+                user_identity_context = f"You are responding as: {user_name}\n\n"
+
+            # System message with email context and instructions
+            system_message = f"""{user_identity_context}{ai_instructions}
+
+Original Email:
+From: {email_info['sender']}
+{recipient_info}Subject: {email_info['subject']}
+Date: {email_info['date']}
+
+{email_body}"""
+
+            return [
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": f"Key Messages to Include:\n{new_user_input}"}
+            ]
+        else:
+            # Add new user message to existing conversation
+            updated_history = conversation_history.copy()
+            updated_history.append({"role": "user", "content": f"Please revise the draft with these instructions:\n{new_user_input}"})
+            return updated_history
 
     def build_prompt(email_info, key_msgs, user_name="", ai_instructions="", email_token_limit=2000):
         """Build the prompt for the LLM with transparent instructions and fallback protection"""
@@ -4002,17 +3609,19 @@ Key Messages to Include:
 
         return prompt
 
-    def on_generate_stream(file, key_msgs, model, user_name, user_email, ai_instructions, email_token_limit):
+    # AI generation worker function is now handled in backend.py module
+
+    def on_generate_stream(file, key_msgs, model, user_name, user_email, ai_instructions, email_token_limit, conversation_history, is_revision_mode, initial_key_messages):
         try:
             print(f"on_generate_stream called with file: {type(file)} {file}")
             if not file:
                 # No file - back to Stage 1
-                no_file_status_html = get_workflow_banner_html(1)
+                stage1_update, stage2_update, stage3_update = get_workflow_banner_html(1)
 
                 yield (
-                    gr.update(visible=True),  # Keep file input visible
+                    gr.update(visible=True),  # Show upload panel when no file
                     """
-                    <div class='draft-placeholder'>
+                    <div class='thread-placeholder'>
                         <div class='placeholder-content'>
                             <div class='placeholder-icon'>❌</div>
                             <h3>No File Uploaded</h3>
@@ -4030,21 +3639,28 @@ Key Messages to Include:
                     </div>
                     """,
                     gr.update(visible=False),  # Hide thinking accordion
-                    gr.update(open=False, visible=False),  # Hide and close draft accordion
-                    gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),  # Hide key messages accordion
+                    gr.update(visible=False),  # Hide thread preview group
+                    gr.update(visible=False),  # Hide original reference group
+                    gr.update(visible=False),  # Hide key messages container
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
                     "",  # Clear current_think state
-                    no_file_status_html,  # Show no file status
-                    gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button
+                    stage1_update,  # Update stage 1 banner
+                    stage2_update,  # Update stage 2 banner
+                    stage3_update,  # Update stage 3 banner
+                    gr.update(interactive=True, value="🚀 Generate Reply"),  # Re-enable button
+                    [],  # Clear conversation history
+                    False,  # Reset revision mode
+                    "",  # Clear initial key messages
+                    1,  # Back to Stage 1
+                    [1]  # Only Stage 1 unlocked
                 )
                 return
             # Check if any backend is healthy (with automatic fallback)
             if not backend_manager.is_any_backend_healthy():
                 # No APIs available - stay on Stage 2
-                api_unavailable_status_html = get_workflow_banner_html(2)
+                stage1_update, stage2_update, stage3_update = get_workflow_banner_html(2)
 
                 # Get backend status for detailed error message
                 backend_status = backend_manager.get_backend_status()
@@ -4052,9 +3668,9 @@ Key Messages to Include:
                 openrouter_status = "✅ Healthy" if backend_status['openrouter']['healthy'] else "❌ Unavailable"
 
                 yield (
-                    gr.update(visible=True),   # Keep file input visible for retry
+                    gr.update(visible=True),   # Show upload panel for retry
                     f"""
-                    <div class='draft-placeholder'>
+                    <div class='thread-placeholder'>
                         <div class='placeholder-content'>
                             <div class='placeholder-icon'>❌</div>
                             <h3>All AI Backends Unavailable</h3>
@@ -4069,15 +3685,22 @@ Key Messages to Include:
                     """,
                     format_email_preview({}),
                     gr.update(visible=False),  # Hide thinking accordion
-                    gr.update(open=False, visible=False),  # Hide and close draft accordion
-                    gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),  # Hide key messages accordion
+                    gr.update(visible=False),  # Hide thread preview group
+                    gr.update(visible=False),  # Hide original reference group
+                    gr.update(visible=False),  # Hide key messages container
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
                     "",  # Clear current_think state
-                    api_unavailable_status_html,  # Show API unavailable status
-                    gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button
+                    stage1_update,  # Update stage 1 banner
+                    stage2_update,  # Update stage 2 banner
+                    stage3_update,  # Update stage 3 banner
+                    gr.update(interactive=True, value="🚀 Generate Reply"),  # Re-enable button
+                    [],  # Clear conversation history
+                    False,  # Reset revision mode
+                    "",  # Clear initial key messages
+                    2,  # Stay on Stage 2
+                    [1, 2]  # Stages 1 and 2 unlocked (error in Stage 2)
                 )
                 return
 
@@ -4085,12 +3708,12 @@ Key Messages to Include:
             print(f"process_msg_file returned info: {info}, error: {error}")
             if error:
                 # Processing error - back to Stage 1
-                processing_error_status_html = get_workflow_banner_html(1)
+                stage1_update, stage2_update, stage3_update = get_workflow_banner_html(1)
 
                 yield (
-                    gr.update(visible=True),   # Keep file input visible for retry
+                    gr.update(visible=True),   # Show upload panel for retry
                     """
-                    <div class='draft-placeholder'>
+                    <div class='thread-placeholder'>
                         <div class='placeholder-content'>
                             <div class='placeholder-icon'>❌</div>
                             <h3>Processing Error</h3>
@@ -4100,160 +3723,329 @@ Key Messages to Include:
                     """,
                     format_email_preview({}),
                     gr.update(visible=False),  # Hide thinking accordion
-                    gr.update(open=False, visible=False),  # Hide and close draft accordion
-                    gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),  # Hide key messages accordion
+                    gr.update(visible=False),  # Hide thread preview group
+                    gr.update(visible=False),  # Hide original reference group
+                    gr.update(visible=False),  # Hide key messages container
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
                     "",  # Clear current_think state
-                    processing_error_status_html,  # Show processing error status
-                    gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button
+                    stage1_update,  # Update stage 1 banner
+                    stage2_update,  # Update stage 2 banner
+                    stage3_update,  # Update stage 3 banner
+                    gr.update(interactive=True, value="🚀 Generate Reply"),  # Re-enable button
+                    [],  # Clear conversation history
+                    False,  # Reset revision mode
+                    "",  # Clear initial key messages
+                    1,  # Back to Stage 1
+                    [1]  # Only Stage 1 unlocked
                 )
                 return
 
             # Show original email in bottom section, hide file upload
             original_email_preview = format_email_preview(info)
 
-            prompt = build_prompt(info, key_msgs, user_name, ai_instructions, email_token_limit)
+            # Determine if this is initial generation or revision
+            if not conversation_history or len(conversation_history) == 0:
+                # Initial generation - build conversation history
+                updated_conversation_history = build_conversation_history(
+                    info, [], key_msgs, user_name, ai_instructions, email_token_limit
+                )
+                updated_initial_key_messages = key_msgs
+                updated_is_revision_mode = False
+                prompt = build_prompt(info, key_msgs, user_name, ai_instructions, email_token_limit)  # Fallback for non-conversation backends
+            else:
+                # Revision mode - add new user message to conversation
+                updated_conversation_history = build_conversation_history(
+                    info, conversation_history, key_msgs, user_name, ai_instructions, email_token_limit
+                )
+                updated_initial_key_messages = initial_key_messages
+                updated_is_revision_mode = True
+                prompt = ""  # Not used in conversation mode
 
             # Initialize streaming - open draft accordion and show generation status
             full_response = ""
 
-            # Initial draft area - pure content placeholder with bouncing dots animation
-            initial_draft_status = f"""
-            <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #e5e7eb;'>
-                <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #9ca3af; text-align: center; padding: 40px 20px; font-size: 11pt;'>
-                    {create_bouncing_dots_html("Generating your email response")}
-                </div>
-            </div>
-            """
+            # Initial draft area - loading overlay that preserves background content
+            initial_draft_status = create_loading_overlay_html(
+                "Generating your email response",
+                model,
+                backend_manager.current_backend_type,
+                ""  # No background content initially, will show placeholder
+            )
 
             # Generation status - stay on Stage 2 during generation
-            generating_status_html = get_workflow_banner_html(2)
+            stage1_update, stage2_update, stage3_update = get_workflow_banner_html(2)
 
-            # After Generate Reply: make draft accordion visible and open to show streaming content
+            # After Generate Reply: make thread preview accordion visible and open to show streaming content
+            # Clear key_messages field if this is a revision submission
+            key_messages_update = gr.update(value="") if updated_is_revision_mode else gr.update()
+
             yield (
-                gr.update(visible=True),        # Keep file input visible for persistent email access
-                initial_draft_status,           # Show generation status in draft area
-                original_email_preview,         # Keep original email visible
+                gr.update(visible=False),       # Hide upload panel after successful upload - Stage 2 and beyond
+                initial_draft_status,           # Show generation status in thread preview area
+                original_email_preview,         # Keep original email visible in reference section
                 gr.update(visible=False),       # Hide thinking accordion initially
-                gr.update(open=True, visible=True),  # Make draft accordion visible and open to show generation
-                gr.update(open=True, visible=True),  # Make original email accordion visible and open
-                gr.update(open=True, visible=True),  # Make key messages accordion visible and open
+                gr.update(visible=True),  # Make thread preview group visible to show generation
+                gr.update(visible=False),  # Hide original reference group when draft preview becomes available
+                key_messages_update,            # Clear key messages field if revision, otherwise keep as is
                 "",                             # Clear thinking content initially
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                             # Clear current_reply state
                 "",                             # Clear current_think state
-                generating_status_html,         # Show generating status
-                gr.update(interactive=False, value="⏳ Generating...")  # Disable button and show generating text
+                stage1_update,                  # Update stage 1 banner
+                stage2_update,                  # Update stage 2 banner
+                stage3_update,                  # Update stage 3 banner
+                gr.update(interactive=False, value="⏳ Generating..."),  # Disable button and show generating text
+                updated_conversation_history,   # Update conversation history state
+                updated_is_revision_mode,       # Update revision mode state
+                updated_initial_key_messages,   # Update initial key messages state
+                2,                              # Stay on Stage 2 during generation
+                [1, 2]                          # Stages 1 and 2 unlocked
             )
 
-            # Stream the response using a healthy backend (with automatic fallback)
-            healthy_backend = backend_manager.get_healthy_backend()
-            for chunk, done in healthy_backend.stream_response(prompt, model):
-                full_response += chunk
+            # Initialize result queue for thread-safe communication
+            result_queue = queue.Queue()
 
-                if not done:
-                    # Extract think content and main reply for streaming
-                    main_reply, think_content = extract_and_separate_think_content(full_response)
+            # Start AI generation in background thread
+            future = AI_THREAD_POOL.submit(
+                ai_generation_worker,
+                result_queue,
+                prompt,
+                model,
+                updated_conversation_history,
+                info,
+                key_msgs,
+                user_name,
+                ai_instructions,
+                email_token_limit
+            )
 
-                    # During streaming: show real-time content in draft area - pure content only
-                    if main_reply.strip():
-                        # Show actual streaming content in draft area - clean, no status headers
-                        # Use direct paragraph formatting to avoid double-wrapping
-                        formatted_content = format_reply_content_simple(main_reply)
-                        draft_content = f"""
-                        <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 2px solid #f97316;'>
-                            <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.0; color: #374151; font-size: 11pt;'>
-                                {formatted_content}
+            # Non-blocking UI updates with responsive streaming
+            full_response = ""
+            while True:
+                try:
+                    # Check for results with timeout to keep UI responsive
+                    msg_type, content, is_done = result_queue.get(timeout=0.1)
+
+                    if msg_type == 'chunk':
+                        full_response = content
+
+                        if not is_done:
+                            # Extract think content and main reply for streaming
+                            # Note: No progress update here - users can see real-time streaming content
+                            main_reply, think_content = extract_and_separate_think_content(full_response)
+
+                            # During streaming: show real-time content in thread preview - complete email thread
+                            if main_reply.strip():
+                                # Show streaming thread preview with partial content
+                                try:
+                                    partial_thread_preview = format_complete_email_thread_preview(
+                                        main_reply, info, user_email, user_name
+                                    )
+                                    draft_content = partial_thread_preview
+                                except Exception as e:
+                                    print(f"Error creating partial thread preview: {e}")
+                                    # Fallback to simple content display
+                                    formatted_content = format_reply_content_simple(main_reply)
+                                    draft_content = f"""
+                                    <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 2px solid #6b21a8;'>
+                                        <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.0; color: #374151; font-size: 11pt;'>
+                                            {formatted_content}
+                                        </div>
+                                    </div>
+                                    """
+
+                            else:
+                                # Still processing - show loading overlay that preserves any existing content
+                                draft_content = create_loading_overlay_html(
+                                    "Processing your request",
+                                    model,
+                                    backend_manager.current_backend_type,
+                                    ""  # No background content during processing
+                                )
+
+                            # Show/hide think accordion based on content with auto-scroll - ONLY thinking content
+                            think_visible = think_content is not None and len(think_content.strip()) > 0
+                            think_display = think_content if think_visible else ""
+
+                            # Update status instructions during streaming - stay on Stage 2
+                            stage1_update, stage2_update, stage3_update = get_workflow_banner_html(2)
+
+                            # Stream to thread preview area, keep thread accordion open, show thinking if available
+                            # Keep key_messages field cleared if this is a revision
+                            key_messages_update = gr.update(value="") if updated_is_revision_mode else gr.update()
+
+                            yield (
+                                gr.update(visible=False),           # Keep upload panel hidden after successful upload - Stage 2 and beyond
+                                draft_content,                      # Show streaming content in thread preview area
+                                original_email_preview,             # Keep original email visible in reference section
+                                gr.update(visible=think_visible, open=think_visible),  # Show/hide thinking accordion
+                                gr.update(visible=True), # Keep thread preview group visible during streaming
+                                gr.update(visible=False), # Hide original reference group when draft preview is available
+                                key_messages_update,                # Keep key messages field cleared if revision
+                                think_display,                      # Show thinking content if available
+                                gr.update(visible=False, value=None),  # Hide download file during generation
+                                main_reply,                         # Update current_reply state
+                                think_content or "",                # Update current_think state
+                                stage1_update,                      # Update stage 1 banner
+                                stage2_update,                      # Update stage 2 banner
+                                stage3_update,                      # Update stage 3 banner
+                                gr.update(interactive=False, value="⏳ Generating..."),  # Keep button disabled during streaming
+                                updated_conversation_history,       # Update conversation history state
+                                updated_is_revision_mode,           # Update revision mode state
+                                updated_initial_key_messages,       # Update initial key messages state
+                                2,                                  # Stay on Stage 2 during streaming
+                                [1, 2]                              # Stages 1 and 2 unlocked
+                            )
+
+                        elif is_done:
+                            # Final response - show complete thread preview in main section, original email reference available
+                            # Note: No progress update here - users can see the final content being displayed
+                            main_reply, think_content = extract_and_separate_think_content(full_response)
+
+                            # Format the final complete email thread preview - exactly like download
+                            try:
+                                final_thread_preview = format_complete_email_thread_preview(
+                                    main_reply, info, user_email, user_name
+                                )
+                                final_draft_content = final_thread_preview
+                            except Exception as e:
+                                print(f"Error creating final thread preview: {e}")
+                                # Fallback to simple content display
+                                formatted_content = format_reply_content_simple(main_reply)
+                                final_draft_content = f"""
+                                <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 2px solid #6b21a8;'>
+                                    <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.0; color: #374151; font-size: 11pt;'>
+                                        {formatted_content}
+                                    </div>
+                                </div>
+                                """
+
+                            # Show/hide think accordion based on content - automatically collapse after completion
+                            think_visible = think_content is not None and len(think_content.strip()) > 0
+                            think_display = think_content if think_visible else ""
+
+                            # Completion status instructions - all completion status moved here
+                            # Completion status - move to Stage 3, unlock all stages
+                            stage1_update, stage2_update, stage3_update = get_workflow_banner_html(3, [1, 2, 3])
+
+                            # Automatically generate download file when generation completes
+                            download_file_update = generate_download_file(main_reply, info, user_email, user_name)
+
+                            # Update conversation history with assistant response
+                            updated_conversation_history.append({"role": "assistant", "content": main_reply})
+
+                            # Update UI for revision mode after first generation
+                            label_text, button_text, _ = update_ui_for_revision_mode(True)
+
+                            # Final state: complete thread preview in main section, original email reference available
+                            # Clear key_messages field and update label for revision mode
+                            key_messages_final_update = gr.update(visible=True, label=label_text, value="")
+
+                            # Button should be disabled initially in revision mode since key_messages is empty
+                            # The validation will be triggered by the key_messages.change event when user types
+                            button_update = gr.update(interactive=False, value=button_text)
+
+                            # Note: No completion progress update - users can see the completed response
+
+                            yield (
+                                gr.update(visible=False),           # Keep upload panel hidden after successful upload - Stage 3 completion
+                                final_draft_content,                # Show final complete thread preview
+                                original_email_preview,             # Keep original email visible in reference section
+                                gr.update(visible=think_visible, open=False),  # Show thinking accordion but collapsed
+                                gr.update(visible=True), # Keep thread preview group visible to show final result
+                                gr.update(visible=False), # Hide original reference group when draft preview is complete
+                                key_messages_final_update,          # Clear key messages field and update label for revision mode
+                                think_display,                      # Show thinking content if available
+                                download_file_update,               # Show download file
+                                main_reply,                         # Update current_reply state
+                                think_content or "",                # Update current_think state
+                                stage1_update,                      # Update stage 1 banner
+                                stage2_update,                      # Update stage 2 banner
+                                stage3_update,                      # Update stage 3 banner
+                                button_update,                      # Button disabled initially in revision mode
+                                updated_conversation_history,       # Update conversation history state
+                                True,                               # Set revision mode to True
+                                updated_initial_key_messages,       # Update initial key messages state
+                                3,                                  # Move to Stage 3
+                                [1, 2, 3]                           # All stages unlocked
+                            )
+                            return
+
+                    elif msg_type == 'error':
+                        # Handle error from worker thread
+                        error_draft = f"""
+                        <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #ef4444;'>
+                            <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #dc2626; text-align: center; padding: 40px 20px; font-size: 11pt;'>
+                                <div style='font-size: 1.1em;'>Generation failed: {content}</div>
                             </div>
                         </div>
                         """
 
+                        # Error generation status - stay on Stage 2
+                        stage1_update, stage2_update, stage3_update = get_workflow_banner_html(2)
 
-                    else:
-                        # Still processing - show clean loading state with bouncing dots
-                        draft_content = f"""
-                        <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #e5e7eb;'>
-                            <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #9ca3af; text-align: center; padding: 40px 20px; font-size: 11pt;'>
-                                {create_bouncing_dots_html("Processing your request")}
-                            </div>
-                        </div>
-                        """
+                        yield (
+                            gr.update(visible=True),            # Show upload panel for retry
+                            error_draft,                        # Show error in thread preview area
+                            format_email_preview({}),           # Clear original email area
+                            gr.update(visible=False),           # Hide thinking accordion
+                            gr.update(visible=False),  # Hide thread preview group
+                            gr.update(visible=False),  # Hide original reference group
+                            gr.update(visible=False),  # Hide key messages container
+                            "",                                 # Clear thinking content
+                            gr.update(visible=False, value=None),  # Hide download file
+                            "",                                 # Clear current_reply state
+                            "",                                 # Clear current_think state
+                            stage1_update,                      # Update stage 1 banner
+                            stage2_update,                      # Update stage 2 banner
+                            stage3_update,                      # Update stage 3 banner
+                            gr.update(interactive=True, value="🚀 Generate Reply"),  # Re-enable button on error
+                            [],                                 # Clear conversation history
+                            False,                              # Reset revision mode
+                            "",                                 # Clear initial key messages
+                            2,                                  # Stay on Stage 2
+                            [1, 2]                              # Stages 1 and 2 unlocked
+                        )
+                        return
 
-
-
-                    # Show/hide think accordion based on content with auto-scroll - ONLY thinking content
-                    think_visible = think_content is not None and len(think_content.strip()) > 0
-                    think_display = think_content if think_visible else ""
-
-                    # Auto-scroll JavaScript removed for Hugging Face Spaces compatibility
-
-                    # Update status instructions during streaming - stay on Stage 2
-                    streaming_status_html = get_workflow_banner_html(2)
-
-                    # Stream to draft area, keep draft accordion open, show thinking if available
-                    yield (
-                        gr.update(visible=True),            # Keep file input visible for persistent email access
-                        draft_content,                      # Show streaming content in draft area
-                        original_email_preview,             # Keep original email visible
-                        gr.update(visible=think_visible, open=think_visible),  # Show/hide thinking accordion
-                        gr.update(open=True, visible=True), # Keep draft accordion visible and open during streaming
-                        gr.update(open=True, visible=True), # Keep original email accordion visible and open
-                        gr.update(open=True, visible=True), # Keep key messages accordion visible and open
-                        think_display,                      # Show thinking content if available
-                        gr.update(visible=False, value=None),  # Hide download file during generation
-                        main_reply,                         # Update current_reply state
-                        think_content or "",                # Update current_think state
-                        streaming_status_html,              # Show streaming status with hints
-                        gr.update(interactive=False, value="⏳ Generating...")  # Keep button disabled during streaming
+                except queue.Empty:
+                    # No new data, yield progress indicator to keep UI responsive
+                    # Use overlay to preserve any existing content users might want to reference
+                    progress_content = create_loading_overlay_html(
+                        "Connecting to AI service",
+                        model,
+                        backend_manager.current_backend_type,
+                        ""  # No specific background content - will show placeholder
                     )
-                else:
-                    # Final response - show complete draft in draft area, keep original email in bottom section
-                    main_reply, think_content = extract_and_separate_think_content(full_response)
 
-                    # Format the final draft for the draft preview area - pure content only
-                    # Use direct paragraph formatting to avoid double-wrapping
-                    formatted_content = format_reply_content_simple(main_reply)
-                    final_draft_content = f"""
-                    <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 2px solid #f97316;'>
-                        <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.0; color: #374151; font-size: 11pt;'>
-                            {formatted_content}
-                        </div>
-                    </div>
-                    """
+                    # Update status instructions during connection - stay on Stage 2
+                    stage1_update, stage2_update, stage3_update = get_workflow_banner_html(2)
 
-
-
-                    # Show/hide think accordion based on content - automatically collapse after completion
-                    think_visible = think_content is not None and len(think_content.strip()) > 0
-                    think_display = think_content if think_visible else ""
-
-                    # Completion status instructions - all completion status moved here
-                    # Completion status - move to Stage 3
-                    completion_status_html = get_workflow_banner_html(3)
-
-                    # Automatically generate download file when generation completes
-                    download_file_update = generate_download_file(main_reply, info, user_email, user_name)
-
-                    # Final state: draft in top section with accordion open, original email in bottom section
                     yield (
-                        gr.update(visible=True),            # Keep file input visible for persistent email access
-                        final_draft_content,                # Show final draft content
+                        gr.update(visible=False),           # Keep upload panel hidden
+                        progress_content,                   # Show progress indicator
                         original_email_preview,             # Keep original email visible
-                        gr.update(visible=think_visible, open=False),  # Show thinking accordion but collapsed
-                        gr.update(open=True, visible=True), # Keep draft accordion visible and open to show final result
-                        gr.update(open=True, visible=True), # Keep original email accordion visible and open
-                        gr.update(open=True, visible=True), # Keep key messages accordion visible and open
-                        think_display,                      # Show thinking content if available
-                        download_file_update,               # Show download file
-                        main_reply,                         # Update current_reply state
-                        think_content or "",                # Update current_think state
-                        completion_status_html,             # Show completion status
-                        gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button when complete
+                        gr.update(visible=False),           # Hide thinking accordion
+                        gr.update(visible=True), # Keep thread preview group visible
+                        gr.update(visible=True), # Keep original reference group visible so users can read original email
+                        gr.update(visible=True), # Keep key messages container visible
+                        "",                                 # Clear thinking content
+                        gr.update(visible=False, value=None),  # Hide download file
+                        "",                                 # Clear current_reply state
+                        "",                                 # Clear current_think state
+                        stage1_update,                      # Update stage 1 banner
+                        stage2_update,                      # Update stage 2 banner
+                        stage3_update,                      # Update stage 3 banner
+                        gr.update(interactive=False, value="⏳ Generating..."),  # Keep button disabled
+                        updated_conversation_history,       # Update conversation history state
+                        updated_is_revision_mode,           # Update revision mode state
+                        updated_initial_key_messages,       # Update initial key messages state
+                        2,                                  # Stay on Stage 2 during connection
+                        [1, 2]                              # Stages 1 and 2 unlocked
                     )
-                    return
+                    continue
             
         except Exception as e:
             import traceback
@@ -4269,29 +4061,165 @@ Key Messages to Include:
             """
 
             # Error generation status - stay on Stage 2
-            error_generation_status_html = get_workflow_banner_html(2)
+            stage1_update, stage2_update, stage3_update = get_workflow_banner_html(2)
 
             yield (
-                gr.update(visible=True),            # Show file input for retry
-                error_draft,                        # Show error in draft area
+                gr.update(visible=True),            # Show upload panel for retry
+                error_draft,                        # Show error in thread preview area
                 format_email_preview({}),           # Clear original email area
                 gr.update(visible=False),           # Hide thinking accordion
-                gr.update(open=False, visible=False),  # Hide and close draft accordion
-                gr.update(open=False, visible=False),  # Close and hide original accordion
-                gr.update(open=False, visible=False),  # Hide key messages accordion
+                gr.update(visible=False),  # Hide thread preview group
+                gr.update(visible=False),  # Hide original reference group
+                gr.update(visible=False),  # Hide key messages container
                 "",                                 # Clear thinking content
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                                 # Clear current_reply state
                 "",                                 # Clear current_think state
-                error_generation_status_html,       # Show error status
-                gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button on error
+                stage1_update,                      # Update stage 1 banner
+                stage2_update,                      # Update stage 2 banner
+                stage3_update,                      # Update stage 3 banner
+                gr.update(interactive=True, value="🚀 Generate Reply"),  # Re-enable button on error
+                [],                                 # Clear conversation history
+                False,                              # Reset revision mode
+                "",                                 # Clear initial key messages
+                2,                                  # Stay on Stage 2
+                [1, 2]                              # Stages 1 and 2 unlocked
             )
 
-    # Event handlers - Updated for new component order: Upload → Thinking → Draft → Original
-    file_input.change(extract_and_display_email, inputs=file_input, outputs=[file_input, original_email_display, upload_accordion, original_accordion, key_messages_accordion, current_email_info, status_instructions])
-    file_input.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
-    key_messages.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
-    model_selector.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
+    def reset_conversation_state():
+        """Reset conversation state when a new email is uploaded"""
+        return [], False, ""  # Clear conversation_history, reset is_revision_mode, clear initial_key_messages
+
+    def clear_key_messages_for_revision(is_revision):
+        """Clear key messages field when entering revision mode and update label"""
+        if is_revision:
+            return gr.update(
+                label="✏️ Revision Instructions",
+                value="",
+                placeholder="Enter your revision instructions...\n\nExample:\n• Make the tone more formal\n• Add information about next steps\n• Shorten the response"
+            )
+        else:
+            return gr.update(
+                label="📝 Key Messages",
+                placeholder="Enter the key messages you want to include in your reply...\n\nExample:\n• Thank them for their inquiry\n• Confirm the meeting time\n• Provide additional resources"
+            )
+
+    # ===== STAGE NAVIGATION FUNCTIONS =====
+
+    def navigate_to_stage_1():
+        """Navigate back to Stage 1 - Reset all application state"""
+        # Get banner updates for Stage 1 - reset to only Stage 1 unlocked
+        stage1_update, stage2_update, stage3_update = update_stage_banners(1, [1])
+
+        return (
+            gr.update(visible=True),  # Show upload panel
+            """
+            <div class='thread-placeholder'>
+                <div class='placeholder-content'>
+                    <div class='placeholder-icon'>📧</div>
+                    <h3>Upload Email File Above</h3>
+                    <p>Select your .msg email file to get started</p>
+                    <div class='placeholder-hint'>Supported format: .msg files</div>
+                </div>
+            </div>
+            """,  # Clear thread preview
+            """
+            <div class='email-placeholder'>
+                <div class='placeholder-content'>
+                    <div class='placeholder-icon'>📧</div>
+                    <h3>Upload Email File Above</h3>
+                    <p>Select your .msg email file to view the original email content</p>
+                    <div class='placeholder-hint'>Supported format: .msg files</div>
+                </div>
+            </div>
+            """,  # Clear original reference display
+            gr.update(visible=False),  # Hide thinking accordion
+            gr.update(visible=False),  # Hide thread preview group
+            gr.update(visible=False),  # Hide original reference group
+            gr.update(visible=False),  # Hide key messages container
+            "",  # Clear thinking content
+            gr.update(visible=False, value=None),  # Hide download button
+            "",  # Clear current_reply state
+            "",  # Clear current_think state
+            stage1_update,  # Update stage 1 banner
+            stage2_update,  # Update stage 2 banner
+            stage3_update,  # Update stage 3 banner
+            gr.update(interactive=False, value="🚀 Generate Reply"),  # Reset generate button
+            [],  # Clear conversation history
+            False,  # Reset revision mode
+            "",  # Clear initial key messages
+            {},  # Clear current email info
+            None,  # Clear file input
+            1,  # Set current stage to 1
+            [1]  # Reset to only Stage 1 unlocked
+        )
+
+    def navigate_to_stage_2(current_email_info, current_unlocked_stages):
+        """Navigate back to Stage 2 - Preserve email, clear draft content"""
+        # Check if Stage 2 is unlocked
+        if 2 not in current_unlocked_stages:
+            # Stage 2 is not unlocked, stay on current stage
+            return [gr.update() for _ in range(22)]  # Return no-change updates for all outputs
+
+        # Get banner updates for Stage 2
+        stage1_update, stage2_update, stage3_update = update_stage_banners(2, current_unlocked_stages)
+
+        # Format the preserved email preview
+        email_preview = format_email_preview(current_email_info) if current_email_info else """
+        <div class='email-placeholder'>
+            <div class='placeholder-content'>
+                <div class='placeholder-icon'>📧</div>
+                <h3>Upload Email File Above</h3>
+                <p>Select your .msg email file to view the original email content</p>
+                <div class='placeholder-hint'>Supported format: .msg files</div>
+            </div>
+        </div>
+        """
+
+        return (
+            gr.update(visible=False),  # Hide upload panel (email already uploaded)
+            """
+            <div class='thread-placeholder'>
+                <div class='placeholder-content'>
+                    <div class='placeholder-icon'>✍️</div>
+                    <h3>Ready to Generate Reply</h3>
+                    <p>Enter your key messages and click Generate Reply</p>
+                </div>
+            </div>
+            """,  # Clear thread preview but show ready state
+            email_preview,  # Preserve original email display
+            gr.update(visible=False),  # Hide thinking accordion
+            gr.update(visible=False),  # Hide thread preview group
+            gr.update(visible=True),   # Show original reference group
+            gr.update(
+                visible=True,
+                label="📝 Key Messages",
+                value="",
+                placeholder="Enter the key messages you want to include in your reply...\n\nExample:\n• Thank them for their inquiry\n• Confirm the meeting time\n• Provide additional resources"
+            ),   # Show key messages container and reset to initial state
+            "",  # Clear thinking content
+            gr.update(visible=False, value=None),  # Hide download button
+            "",  # Clear current_reply state
+            "",  # Clear current_think state
+            stage1_update,  # Update stage 1 banner
+            stage2_update,  # Update stage 2 banner
+            stage3_update,  # Update stage 3 banner
+            gr.update(interactive=False, value="🚀 Generate Reply"),  # Reset generate button (will be enabled by validation)
+            [],  # Clear conversation history
+            False,  # Reset revision mode
+            "",  # Clear initial key messages
+            current_email_info,  # Preserve current email info
+            gr.update(),  # Keep file input as is
+            2,  # Set current stage to 2
+            current_unlocked_stages  # Maintain current unlocked stages
+        )
+
+    # Event handlers - Updated for full-width upload panel
+    file_input.change(extract_and_display_email, inputs=file_input, outputs=[upload_panel, original_reference_display, original_reference_accordion, key_messages, current_email_info, stage1_html, stage2_html, stage3_html, generate_btn, current_stage, unlocked_stages])
+    file_input.change(reset_conversation_state, outputs=[conversation_history, is_revision_mode, initial_key_messages])
+    file_input.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
+    key_messages.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
+    model_selector.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
 
 
 
@@ -4304,7 +4232,44 @@ Key Messages to Include:
     # Backend selector change handler
     backend_selector.change(on_backend_change, inputs=[backend_selector], outputs=[model_selector])
 
-    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit], outputs=[file_input, draft_preview, original_email_display, think_accordion, draft_accordion, original_accordion, key_messages_accordion, think_output, download_button, current_reply, current_think, status_instructions, generate_btn])
+    # Model selector change handler for validation
+    model_selector.change(on_model_change, inputs=[backend_selector, model_selector], outputs=[model_selector])
+
+    # Parser selector change handler
+    parser_selector.change(on_parser_change, inputs=[parser_selector], outputs=[parser_info])
+
+    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit, conversation_history, is_revision_mode, initial_key_messages], outputs=[upload_panel, thread_preview, original_reference_display, think_accordion, thread_preview_accordion, original_reference_accordion, key_messages, think_output, download_button, current_reply, current_think, stage1_html, stage2_html, stage3_html, generate_btn, conversation_history, is_revision_mode, initial_key_messages, current_stage, unlocked_stages])
+
+    # Update key messages field when revision mode changes
+    is_revision_mode.change(clear_key_messages_for_revision, inputs=[is_revision_mode], outputs=[key_messages])
+    # Update button validation when revision mode changes
+    is_revision_mode.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
+
+    # Stage navigation click handlers - Gradio-native approach
+    stage1_html.click(
+        navigate_to_stage_1,
+        outputs=[
+            upload_panel, thread_preview, original_reference_display, think_accordion,
+            thread_preview_accordion, original_reference_accordion, key_messages,
+            think_output, download_button, current_reply, current_think,
+            stage1_html, stage2_html, stage3_html,  # Update all stage banners
+            generate_btn, conversation_history, is_revision_mode, initial_key_messages,
+            current_email_info, file_input, current_stage, unlocked_stages
+        ]
+    )
+
+    stage2_html.click(
+        navigate_to_stage_2,
+        inputs=[current_email_info, unlocked_stages],
+        outputs=[
+            upload_panel, thread_preview, original_reference_display, think_accordion,
+            thread_preview_accordion, original_reference_accordion, key_messages,
+            think_output, download_button, current_reply, current_think,
+            stage1_html, stage2_html, stage3_html,  # Update all stage banners
+            generate_btn, conversation_history, is_revision_mode, initial_key_messages,
+            current_email_info, file_input, current_stage, unlocked_stages
+        ]
+    )
 
     # Preference persistence using BrowserState - reliable localStorage alternative
     user_name.change(save_user_name, inputs=[user_name, preferences_state], outputs=preferences_state)
@@ -4321,6 +4286,14 @@ Key Messages to Include:
     )
 
 if __name__ == "__main__":
+    # Initialize parser cache for optimal performance
+    print("🚀 Starting SARA Compose with performance optimizations...")
+    initialize_parser_cache()
+
+    # Initialize model validation on startup
+    print("🔄 Initializing dynamic model validation...")
+    initialize_model_validation()
+
     # Check if running on Hugging Face Spaces
     is_hf_spaces = os.getenv("SPACE_ID") is not None
 
