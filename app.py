@@ -890,13 +890,81 @@ def create_loading_overlay_html(text="Processing", model=None, backend_type=None
 custom_css = """
 /* ===== BANNER-ONLY CSS - Minimal styling for workflow banner ===== */
 
-/* Essential CSS variables for banner colors */
+/* Essential CSS variables for banner colors and dark mode support */
 :root {
     /* Primary Brand Colors - HKMA Purple Theme */
     --primary-color: #6b21a8;
     --primary-hover: #581c87;
     --primary-light: #a855f7;
     --primary-gradient: linear-gradient(135deg, #6b21a8 0%, #a855f7 100%);
+
+    /* Light Mode Colors */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8fafc;
+    --bg-tertiary: #f1f5f9;
+    --text-primary: #000000;
+    --text-secondary: #374151;
+    --text-muted: #64748b;
+    --border-light: #e5e7eb;
+    --border-medium: #d1d5db;
+    --scrollbar-track: #f1f5f9;
+    --scrollbar-thumb: #cbd5e1;
+    --scrollbar-thumb-hover: #94a3b8;
+}
+
+/* Dark Mode Colors - Multiple selectors to catch Gradio's dark theme */
+[data-theme="dark"],
+.dark,
+.gradio-container.dark,
+body.dark,
+html.dark,
+.gradio-app.dark,
+:root:has(.dark) {
+    --bg-primary: #1f2937;
+    --bg-secondary: #111827;
+    --bg-tertiary: #374151;
+    --text-primary: #f9fafb;
+    --text-secondary: #e5e7eb;
+    --text-muted: #9ca3af;
+    --border-light: #374151;
+    --border-medium: #4b5563;
+    --scrollbar-track: #374151;
+    --scrollbar-thumb: #6b7280;
+    --scrollbar-thumb-hover: #9ca3af;
+}
+
+/* Auto-detect system dark mode preference and Gradio dark theme URL parameter */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: #1f2937;
+        --bg-secondary: #111827;
+        --bg-tertiary: #374151;
+        --text-primary: #f9fafb;
+        --text-secondary: #e5e7eb;
+        --text-muted: #9ca3af;
+        --border-light: #374151;
+        --border-medium: #4b5563;
+        --scrollbar-track: #374151;
+        --scrollbar-thumb: #6b7280;
+        --scrollbar-thumb-hover: #9ca3af;
+    }
+}
+
+/* Force dark mode when URL contains __theme=dark */
+body:has([data-testid*="dark"]),
+.gradio-container:has([data-testid*="dark"]),
+.gradio-app:has([data-testid*="dark"]) {
+    --bg-primary: #1f2937 !important;
+    --bg-secondary: #111827 !important;
+    --bg-tertiary: #374151 !important;
+    --text-primary: #f9fafb !important;
+    --text-secondary: #e5e7eb !important;
+    --text-muted: #9ca3af !important;
+    --border-light: #374151 !important;
+    --border-medium: #4b5563 !important;
+    --scrollbar-track: #374151 !important;
+    --scrollbar-thumb: #6b7280 !important;
+    --scrollbar-thumb-hover: #9ca3af !important;
 }
 
 /* ===== GRADIO NATIVE STYLING OVERRIDES ===== */
@@ -1309,11 +1377,11 @@ custom_css = """
 }
 
 /* ===== UPLOAD PANEL STYLING ===== */
-/* Full-width upload panel styling with HKMA purple theme consistency */
+/* Full-width upload panel styling with HKMA purple theme consistency and dark mode support */
 .full-width-upload-panel {
-    border: 2px solid #e2e8f0 !important;
+    border: 2px solid var(--border-light) !important;
     border-radius: 12px !important;
-    background: linear-gradient(135deg, #fafafa 0%, #f8fafc 100%) !important;
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%) !important;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
     padding: 16px !important;
     margin: 16px 0 !important;
@@ -1327,47 +1395,46 @@ custom_css = """
 
 /* File input styling within upload panel */
 .full-width-file-input {
-    border: 2px dashed #d1d5db !important;
+    border: 2px dashed var(--border-medium) !important;
     border-radius: 8px !important;
-    background: white !important;
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
     transition: all 0.3s ease !important;
 }
 
 .full-width-file-input:hover {
     border-color: #6b21a8 !important;
-    background: linear-gradient(135deg, #faf5ff 0%, #f3f4f6 100%) !important;
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%) !important;
 }
 
 /* Additional comprehensive targeting for upload panel Gradio elements */
 .gradio-app .full-width-upload-panel,
 .gradio-app .full-width-upload-panel > div,
 .gradio-app .full-width-upload-panel .gradio-group {
-    border: 2px solid #e2e8f0 !important;
+    border: 2px solid var(--border-light) !important;
     border-radius: 12px !important;
-    background: linear-gradient(135deg, #fafafa 0%, #f8fafc 100%) !important;
+    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%) !important;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05) !important;
     padding: 16px !important;
     margin: 16px 0 !important;
 }
 
 /* ===== EMAIL PREVIEW COMPONENTS ===== */
-/* Email Panel Container Styling - Removes Gradio's default grey padding/container styling */
+/* Email Panel Container Styling - Theme-aware styling with dark mode support */
 .email-panel-container {
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-medium);
     border-top: none;
-    background: white;
+    background: var(--bg-primary);
     border-radius: 0 0 8px 8px;
     overflow: hidden;
     position: relative;
     z-index: 1;
 }
 
-
-
 .email-panel-content {
     padding: 0;
     margin: 0;
-    background: white;
+    background: var(--bg-primary);
     border: none;
 }
 
@@ -1394,9 +1461,410 @@ custom_css = """
     padding-bottom: 0 !important;
 }
 
-/* Ensure textarea elements have proper white background */
+/* ===== PLACEHOLDER CONTENT STYLING ===== */
+/* Theme-aware placeholder content with proper dark mode support */
+.thread-placeholder,
+.email-placeholder {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.placeholder-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.placeholder-content .placeholder-icon {
+    font-size: 2.5rem;
+    margin-bottom: 8px;
+}
+
+.placeholder-content h3 {
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.placeholder-content p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: 0;
+    line-height: 1.4;
+}
+
+.placeholder-content .placeholder-hint {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-style: italic;
+    margin-top: 8px;
+}
+
+/* ===== EMAIL CONTENT STYLING ===== */
+/* Theme-aware email content containers */
+.email-content-container {
+    font-family: Calibri, Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.0;
+    background: var(--bg-primary);
+    border: 2px solid var(--border-light);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 0;
+}
+
+.email-header-section {
+    background: var(--bg-secondary);
+    border-bottom: 2px solid var(--border-light);
+    padding: 16px;
+}
+
+.email-body-section {
+    padding: 16px;
+    font-family: 'Microsoft Sans Serif', sans-serif;
+    font-size: 11pt;
+    line-height: 1.0;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+}
+
+.email-scroll-container {
+    max-height: 550px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Custom scrollbar styling for email containers */
+.email-scroll-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.email-scroll-container::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+    border-radius: 3px;
+}
+
+.email-scroll-container::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+}
+
+.email-scroll-container::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+}
+
+/* Email header field styling */
+.email-header-field {
+    margin: 3px 0;
+    font-size: 11pt;
+    display: flex;
+}
+
+.email-header-label {
+    font-weight: bold;
+    color: var(--text-secondary);
+    min-width: 80px;
+    display: inline-block;
+}
+
+.email-header-value {
+    color: var(--text-secondary);
+}
+
+/* Email thread content styling */
+.email-thread-content {
+    font-family: 'Microsoft Sans Serif', sans-serif;
+    font-size: 11pt;
+    line-height: 1.0;
+    color: var(--text-primary);
+}
+
+/* Email paragraph styling - Outlook compatible */
+.email-paragraph {
+    margin: 0;
+    padding: 0;
+    margin-bottom: 0pt;
+    line-height: 1.0;
+    font-family: 'Microsoft Sans Serif', sans-serif;
+    font-size: 11pt;
+    color: var(--text-primary);
+}
+
+.email-paragraph-calibri {
+    margin: 0;
+    padding: 0;
+    margin-bottom: 0pt;
+    font-family: Calibri, Arial, sans-serif;
+    font-size: 11pt;
+    color: var(--text-primary);
+    line-height: 1.0;
+}
+
+/* Original email content styling */
+.original-email-content {
+    margin-top: 16px;
+    border-top: 1px solid var(--border-light);
+    padding-top: 8px;
+    font-family: Calibri, Arial, sans-serif;
+}
+
+.original-email-body {
+    margin-top: 0px;
+    font-family: Calibri, Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.0;
+    color: var(--text-primary);
+}
+
+/* Error and fallback content styling */
+.error-content {
+    padding: 20px;
+    background: var(--bg-primary);
+    border-radius: 8px;
+    margin: 20px;
+    border: 1px solid #ef4444;
+    color: #dc2626;
+    text-align: center;
+    font-family: 'Microsoft Sans Serif', sans-serif;
+    line-height: 1.6;
+    font-size: 11pt;
+}
+
+.empty-state {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 20px;
+    font-style: italic;
+}
+
+/* ===== SIDEBAR DESCRIPTION STYLING ===== */
+/* Theme-aware description box styling */
+.description-box {
+    background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.description-text {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+/* Sidebar section headers */
+.sidebar-section-header {
+    margin: 0 0 12px 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.sidebar-section-header.with-top-margin {
+    margin: 16px 0 12px 0;
+}
+
+/* Disclaimer and contact information styling */
+.disclaimer-text {
+    margin: 0;
+    color: var(--text-muted);
+    line-height: 1.6;
+    font-size: 0.85rem;
+}
+
+.contact-text {
+    margin-bottom: 16px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.info-table {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.info-table th {
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-light);
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.info-table td {
+    border: 1px solid var(--border-light);
+    padding: 12px;
+    color: var(--text-secondary);
+}
+
+/* Parser info styling */
+.parser-info {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-top: 8px;
+}
+
+.parser-info.error {
+    color: #ef4444;
+}
+
+.parser-info.success {
+    color: #10b981;
+}
+
+/* ===== HYPERLINK STYLING ===== */
+/* Consistent hyperlink colors across light and dark themes */
+a,
+.email-content-container a,
+.email-body-section a,
+.email-thread-content a,
+.original-email-body a {
+    color: #2563eb !important; /* Blue color for light mode */
+    text-decoration: underline;
+}
+
+/* Dark mode hyperlink styling - maintain blue but with better contrast */
+[data-theme="dark"] a,
+.dark a,
+.gradio-container.dark a,
+body.dark a,
+html.dark a,
+.gradio-app.dark a,
+:root:has(.dark) a,
+.dark-mode a,
+[data-theme="dark"] .email-content-container a,
+.dark .email-content-container a,
+.dark-mode .email-content-container a,
+[data-theme="dark"] .email-body-section a,
+.dark .email-body-section a,
+.dark-mode .email-body-section a,
+[data-theme="dark"] .email-thread-content a,
+.dark .email-thread-content a,
+.dark-mode .email-thread-content a,
+[data-theme="dark"] .original-email-body a,
+.dark .original-email-body a,
+.dark-mode .original-email-body a {
+    color: #60a5fa !important; /* Lighter blue for dark mode with better contrast */
+    text-decoration: underline;
+}
+
+/* Visited link styling */
+a:visited,
+.email-content-container a:visited,
+.email-body-section a:visited,
+.email-thread-content a:visited,
+.original-email-body a:visited {
+    color: #7c3aed !important; /* Purple for visited links in light mode */
+}
+
+/* Dark mode visited link styling */
+[data-theme="dark"] a:visited,
+.dark a:visited,
+.dark-mode a:visited,
+[data-theme="dark"] .email-content-container a:visited,
+.dark .email-content-container a:visited,
+.dark-mode .email-content-container a:visited,
+[data-theme="dark"] .email-body-section a:visited,
+.dark .email-body-section a:visited,
+.dark-mode .email-body-section a:visited,
+[data-theme="dark"] .email-thread-content a:visited,
+.dark .email-thread-content a:visited,
+.dark-mode .email-thread-content a:visited,
+[data-theme="dark"] .original-email-body a:visited,
+.dark .original-email-body a:visited,
+.dark-mode .original-email-body a:visited {
+    color: #a78bfa !important; /* Lighter purple for visited links in dark mode */
+}
+
+/* JavaScript-based dark mode detection and application */
+</style>
+
+<script>
+// Dark mode detection and application for SARA Compose
+(function() {
+    function applyDarkMode() {
+        // Check URL parameter for dark theme
+        const urlParams = new URLSearchParams(window.location.search);
+        const isDarkTheme = urlParams.get('__theme') === 'dark';
+
+        // Check system preference
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        // Check if Gradio has applied dark theme classes
+        const hasGradioDark = document.body.classList.contains('dark') ||
+                             document.documentElement.classList.contains('dark') ||
+                             document.querySelector('.gradio-container.dark') !== null;
+
+        if (isDarkTheme || prefersDark || hasGradioDark) {
+            document.documentElement.classList.add('dark-mode');
+            document.body.classList.add('dark-mode');
+
+            // Apply dark mode CSS variables
+            const root = document.documentElement;
+            root.style.setProperty('--bg-primary', '#1f2937');
+            root.style.setProperty('--bg-secondary', '#111827');
+            root.style.setProperty('--bg-tertiary', '#374151');
+            root.style.setProperty('--text-primary', '#f9fafb');
+            root.style.setProperty('--text-secondary', '#e5e7eb');
+            root.style.setProperty('--text-muted', '#9ca3af');
+            root.style.setProperty('--border-light', '#374151');
+            root.style.setProperty('--border-medium', '#4b5563');
+            root.style.setProperty('--scrollbar-track', '#374151');
+            root.style.setProperty('--scrollbar-thumb', '#6b7280');
+            root.style.setProperty('--scrollbar-thumb-hover', '#9ca3af');
+        }
+    }
+
+    // Apply on load
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyDarkMode);
+    } else {
+        applyDarkMode();
+    }
+
+    // Re-apply when URL changes (for SPA navigation)
+    window.addEventListener('popstate', applyDarkMode);
+
+    // Watch for system theme changes
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyDarkMode);
+    }
+
+    // Watch for Gradio theme changes
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.type === 'attributes' &&
+                (mutation.attributeName === 'class' || mutation.attributeName === 'data-theme')) {
+                applyDarkMode();
+            }
+        });
+    });
+
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+})();
+</script>
+
+<style>
+
+/* Ensure textarea elements have proper theme-aware background */
 .gradio-textbox textarea {
-    background: white !important;
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
     margin-bottom: 0 !important;
     padding-bottom: 16px !important;
 }
@@ -1421,7 +1889,7 @@ custom_css = """
 
 /* ===== THREAD DISPLAY AREA STYLING ===== */
 .thread-display-area {
-    background: white;
+    background: var(--bg-primary);
     border: none;
     padding: 0;
     margin: 0;
@@ -1439,7 +1907,7 @@ custom_css = """
 
 /* ===== ORIGINAL REFERENCE DISPLAY AREA STYLING ===== */
 .original-reference-display-area {
-    background: white;
+    background: var(--bg-primary);
     border: none;
     padding: 0;
     margin: 0;
@@ -1747,10 +2215,10 @@ def format_email_preview(email_info):
             if email_match:
                 email = email_match.group(1)
                 name = recipient.replace(f'<{email}>', '').strip().strip('"')
-                formatted_recipients.append(f'<a href="mailto:{email}" style="color: #0078d4; text-decoration: none;">{name} &lt;{email}&gt;</a>')
+                formatted_recipients.append(f'<a href="mailto:{email}">{name} &lt;{email}&gt;</a>')
             else:
                 # Assume it's just an email address
-                formatted_recipients.append(f'<a href="mailto:{recipient}" style="color: #0078d4; text-decoration: none;">{recipient}</a>')
+                formatted_recipients.append(f'<a href="mailto:{recipient}">{recipient}</a>')
 
         if len(formatted_recipients) == 1:
             return formatted_recipients[0]
@@ -1765,52 +2233,35 @@ def format_email_preview(email_info):
 
     # Build header lines in standardized order: Sent, To, Cc, Subject (From removed since it will always be the user)
     header_lines = [
-        f'<div style="margin: 3px 0; font-size: 11pt; display: flex;"><span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Sent:</span><span style="color: #374151;">{date}</span></div>'
+        f'<div class="email-header-field"><span class="email-header-label">Sent:</span><span class="email-header-value">{date}</span></div>'
     ]
 
     # Add To: field if recipients exist
     if to_recipients:
-        header_lines.append(f'<div style="margin: 3px 0; font-size: 11pt; display: flex;"><span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">To:</span><span style="color: #374151;">{to_display}</span></div>')
+        header_lines.append(f'<div class="email-header-field"><span class="email-header-label">To:</span><span class="email-header-value">{to_display}</span></div>')
 
     # Add Cc: field if recipients exist
     if cc_recipients:
-        header_lines.append(f'<div style="margin: 3px 0; font-size: 11pt; display: flex;"><span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Cc:</span><span style="color: #374151;">{cc_display}</span></div>')
+        header_lines.append(f'<div class="email-header-field"><span class="email-header-label">Cc:</span><span class="email-header-value">{cc_display}</span></div>')
 
     # Add Subject last
-    header_lines.append(f'<div style="margin: 3px 0; font-size: 11pt; display: flex;"><span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Subject:</span><span style="color: #374151;">{subject}</span></div>')
+    header_lines.append(f'<div class="email-header-field"><span class="email-header-label">Subject:</span><span class="email-header-value">{subject}</span></div>')
 
-    # Create beautiful email preview with inline styling and scroll functionality - 10% height increase
+    # Create beautiful email preview with theme-aware styling and scroll functionality - 10% height increase
     email_preview = f'''
-    <div style="max-height: 550px; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #cbd5e1 #f1f5f9;">
-        <div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; background: white; border: 2px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin: 0;">
+    <div class="email-scroll-container">
+        <div class="email-content-container">
             <!-- Email Header Section -->
-            <div style="background: #f8fafc; border-bottom: 2px solid #e5e7eb; padding: 16px;">
+            <div class="email-header-section">
                 {"".join(header_lines)}
             </div>
-            
+
             <!-- Email Body Section -->
-            <div style="padding: 16px; font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000; background: white;">
+            <div class="email-body-section">
                 {body_html}
             </div>
         </div>
     </div>
-    <style>
-        /* Custom scrollbar for webkit browsers */
-        .original-reference-display-area div:first-child::-webkit-scrollbar {{
-            width: 6px;
-        }}
-        .original-reference-display-area div:first-child::-webkit-scrollbar-track {{
-            background: #f1f5f9;
-            border-radius: 3px;
-        }}
-        .original-reference-display-area div:first-child::-webkit-scrollbar-thumb {{
-            background: #cbd5e1;
-            border-radius: 3px;
-        }}
-        .original-reference-display-area div:first-child::-webkit-scrollbar-thumb:hover {{
-            background: #94a3b8;
-        }}
-    </style>
     '''
 
     return email_preview
@@ -1878,7 +2329,7 @@ def format_reply_content_simple(text):
         html_content = re.sub(r'<p[^>]*>RE:\s*.*?</p>', '', html_content, flags=re.IGNORECASE)
 
         # Apply Outlook-compatible paragraph styling (no bottom margin, use empty paragraphs for spacing)
-        html_content = re.sub(r'<p>', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">', html_content)
+        html_content = re.sub(r'<p>', '<p class="email-paragraph">', html_content)
 
         # Insert empty paragraphs between content paragraphs for Outlook-compatible spacing
         html_content = re.sub(r'</p>\s*<p', '</p><p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p><p', html_content)
@@ -1901,7 +2352,7 @@ def format_reply_content_simple(text):
                 # Convert **text** to <strong>text</strong>
                 para_formatted = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', para_formatted)
                 # Wrap in paragraph tags with Outlook-compatible styling (no bottom margin)
-                formatted_paragraphs.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">{para_formatted}</p>')
+                formatted_paragraphs.append(f'<p class="email-paragraph">{para_formatted}</p>')
 
                 # Add empty paragraph for spacing between content paragraphs (except for the last one)
                 if i < len([p for p in paragraphs if p.strip()]) - 1:
@@ -2041,10 +2492,10 @@ def format_complete_email_thread_preview(reply_text, original_email_info, user_e
                 if email_match:
                     email = email_match.group(1)
                     name = recipient.replace(f'<{email}>', '').strip().strip('"')
-                    formatted.append(f'<a href="mailto:{email}" style="color: #0563C1; text-decoration: underline;">{name} &lt;{email}&gt;</a>')
+                    formatted.append(f'<a href="mailto:{email}">{name} &lt;{email}&gt;</a>')
                 else:
                     # Assume it's just an email address
-                    formatted.append(f'<a href="mailto:{recipient}" style="color: #0563C1; text-decoration: underline;">{recipient}</a>')
+                    formatted.append(f'<a href="mailto:{recipient}">{recipient}</a>')
             return '; '.join(formatted)
 
         cc_display = format_email_links(reply_cc_recipients)
@@ -2058,53 +2509,38 @@ def format_complete_email_thread_preview(reply_text, original_email_info, user_e
         # Use the properly formatted threaded_html content from create_threaded_email_content
         # This ensures proper HTML rendering like Stage 2
         
-        # Create complete email thread preview with exact Stage 2 formatting - 10% height increase
+        # Create complete email thread preview with theme-aware styling - 10% height increase
         thread_preview = f"""
-<div style="max-height: 550px; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #cbd5e1 #f1f5f9;">
-    <div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; background: white; border: 2px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin: 0;">
+<div class="email-scroll-container">
+    <div class="email-content-container">
         <!-- Email Header Section -->
-        <div style="background: #f8fafc; border-bottom: 2px solid #e5e7eb; padding: 16px;">
-            <div style="margin: 3px 0; font-size: 11pt; display: flex;">
-                <span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">From:</span>
-                <span style="color: #374151;">{user_name + ' <' + user_email + '>' if user_name and user_email else 'SARA Compose <sara.compose@example.com>'}</span>
+        <div class="email-header-section">
+            <div class="email-header-field">
+                <span class="email-header-label">From:</span>
+                <span class="email-header-value">{user_name + ' <' + user_email + '>' if user_name and user_email else 'SARA Compose <sara.compose@example.com>'}</span>
             </div>
-            <div style="margin: 3px 0; font-size: 11pt; display: flex;">
-                <span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">To:</span>
-                <span style="color: #374151;">{to_display}</span>
+            <div class="email-header-field">
+                <span class="email-header-label">To:</span>
+                <span class="email-header-value">{to_display}</span>
             </div>
-            <div style="margin: 3px 0; font-size: 11pt; display: flex;">
-                <span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Cc:</span>
-                <span style="color: #374151;">{cc_display}</span>
+            <div class="email-header-field">
+                <span class="email-header-label">Cc:</span>
+                <span class="email-header-value">{cc_display}</span>
             </div>
-            <div style="margin: 3px 0; font-size: 11pt; display: flex;">
-                <span style="font-weight: bold; color: #1f2937; min-width: 80px; display: inline-block;">Subject:</span>
-                <span style="color: #374151;">{reply_subject}</span>
+            <div class="email-header-field">
+                <span class="email-header-label">Subject:</span>
+                <span class="email-header-value">{reply_subject}</span>
             </div>
         </div>
-        
+
         <!-- Email Body Section with proper single line spacing -->
-        <div style="padding: 16px; font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000; background: white;">
-            {threaded_html}
+        <div class="email-body-section">
+            <div class="email-thread-content">
+                {threaded_html}
+            </div>
         </div>
     </div>
-</div>
-<style>
-    /* Custom scrollbar for webkit browsers - Stage 3 Draft Email Preview */
-    .thread-display-area div:first-child::-webkit-scrollbar {{
-        width: 6px;
-    }}
-    .thread-display-area div:first-child::-webkit-scrollbar-track {{
-        background: #f1f5f9;
-        border-radius: 3px;
-    }}
-    .thread-display-area div:first-child::-webkit-scrollbar-thumb {{
-        background: #cbd5e1;
-        border-radius: 3px;
-    }}
-    .thread-display-area div:first-child::-webkit-scrollbar-thumb:hover {{
-        background: #94a3b8;
-    }}
-</style>"""
+</div>"""
 
         return thread_preview
 
@@ -2214,8 +2650,8 @@ def create_threaded_email_content(reply_text, original_email_info):
             formatted_reply_html = formatted_reply_html.replace('<li>', '<li style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt;">')
 
             # Ensure all paragraphs have consistent Outlook-compatible styling (no bottom margin)
-            formatted_reply_html = re.sub(r'<p(?![^>]*style=)', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;"', formatted_reply_html)
-            formatted_reply_html = re.sub(r'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1\.0;"', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;"', formatted_reply_html)
+            formatted_reply_html = re.sub(r'<p(?![^>]*class=)', '<p class="email-paragraph"', formatted_reply_html)
+            formatted_reply_html = re.sub(r'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1\.0;"', '<p class="email-paragraph"', formatted_reply_html)
 
             # Insert empty paragraphs between content paragraphs for Outlook-compatible spacing
             formatted_reply_html = re.sub(r'</p>\s*<p', '</p><p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p><p', formatted_reply_html)
@@ -2245,7 +2681,7 @@ def create_threaded_email_content(reply_text, original_email_info):
                             formatted_paragraphs.append(f'<ul style="margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;">{"".join(list_items)}</ul>')
                     else:
                         # Regular paragraph with Microsoft Sans Serif for AI-generated content (no bottom margin)
-                        formatted_paragraphs.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">{para_formatted}</p>')
+                        formatted_paragraphs.append(f'<p class="email-paragraph">{para_formatted}</p>')
 
                     # Add empty paragraph for spacing between content paragraphs (except for the last one)
                     if i < len([p for p in paragraphs if p.strip()]) - 1:
@@ -2254,28 +2690,28 @@ def create_threaded_email_content(reply_text, original_email_info):
             formatted_reply_html = ''.join(formatted_paragraphs)
 
         # Create threaded content with Microsoft Sans Serif for AI reply using tight Outlook-compatible spacing (like Stage 2)
-        threaded_html = f"""<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
+        threaded_html = f"""<div class="email-thread-content">
 {formatted_reply_html}
 </div>
-<div style="margin-top: 16px; border-top: 1px solid #E1E1E1; padding-top: 8px; font-family: Calibri, Arial, sans-serif;">
-<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>From:</strong> {original_sender}</p>
-<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Sent:</strong> {original_date}</p>"""
+<div class="original-email-content">
+<p class="email-paragraph-calibri"><strong>From:</strong> {original_sender}</p>
+<p class="email-paragraph-calibri"><strong>Sent:</strong> {original_date}</p>"""
 
         if to_recipients:
-            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>To:</strong> {to_display}</p>'
+            threaded_html += f'<p class="email-paragraph-calibri"><strong>To:</strong> {to_display}</p>'
 
         if cc_recipients:
-            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Cc:</strong> {cc_display}</p>'
+            threaded_html += f'<p class="email-paragraph-calibri"><strong>Cc:</strong> {cc_display}</p>'
 
         # Add subject line to match Outlook format
-        threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Subject:</strong> {original_subject}</p>'
+        threaded_html += f'<p class="email-paragraph-calibri"><strong>Subject:</strong> {original_subject}</p>'
 
         # Add blank line after Subject (matching Outlook format)
-        threaded_html += '<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;">&nbsp;</p>'
+        threaded_html += '<p class="email-paragraph-calibri">&nbsp;</p>'
 
         # Add original email body content with Calibri font for authentic Outlook look
         threaded_html += f"""
-<div style="margin-top: 0px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; color: #000000;">
+<div class="original-email-body">
 {original_body_for_threading}
 </div>
 </div>"""
@@ -2387,7 +2823,7 @@ Content-Type: text/html; charset=utf-8
             font-family: 'Microsoft Sans Serif', sans-serif;
             font-size: 11pt;
             line-height: 1.0;
-            color: #000000;
+            color: #000000; /* Keep black for email compatibility */
             margin: 0;
             padding: 0;
         }}
@@ -2402,7 +2838,7 @@ Content-Type: text/html; charset=utf-8
         .quoted-header {{
             font-family: Calibri, Arial, sans-serif;
             font-size: 11pt;
-            color: #000000;
+            color: #000000; /* Keep black for email compatibility */
             line-height: 1.0;
         }}
     </style>
@@ -2872,8 +3308,8 @@ def create_sidebar():
 
     # Description Header Section
     gr.HTML("""
-    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%); border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);">
-        <p style="margin: 0; color: #374151; line-height: 1.6; font-size: 0.9rem; text-align: left;">
+    <div class="description-box">
+        <p class="description-text">
             <strong>SARA Compose</strong> is an email drafting assistant developed by <strong>RD</strong>, designed to handle confidential materials and protect user privacy.
         </p>
     </div>
@@ -2882,7 +3318,7 @@ def create_sidebar():
     # Personal Preferences Section
     with gr.Accordion("👤 Personal Preferences", open=False):
         with gr.Group():
-            gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>User Identity</h4>")
+            gr.HTML("<h4 class='sidebar-section-header'>User Identity</h4>")
             user_name = gr.Textbox(
                 label="Your Name",
                 placeholder="Enter your full name...",
@@ -2899,7 +3335,7 @@ def create_sidebar():
             )
 
         with gr.Group():
-            gr.HTML("<h4 style='margin: 16px 0 12px 0; color: #64748b; font-size: 0.9rem;'>AI Instructions</h4>")
+            gr.HTML("<h4 class='sidebar-section-header with-top-margin'>AI Instructions</h4>")
 
             ai_instructions = gr.Textbox(
                 label="AI Instructions",
@@ -2926,7 +3362,7 @@ def create_sidebar():
     with gr.Accordion("⚠️ Disclaimer", open=False):
         gr.HTML("""
         <div style="padding: 16px;">
-            <p style="margin: 0; color: #6b7280; line-height: 1.6; font-size: 0.85rem;">
+            <p class="disclaimer-text">
                 Please be advised that all responses generated by SARA are provided in good faith and designed solely for the purpose of offering general information. While we strive for accuracy, SARA does not guarantee or warrant the completeness, reliability, or precision of the information provided. It is strongly recommended that users independently verify the information generated by SARA before utilizing it in any further capacity. Any actions or decisions made based on SARA's responses are undertaken entirely at the user's own risk.
             </p>
         </div>
@@ -2936,37 +3372,37 @@ def create_sidebar():
     with gr.Accordion("📞 Support & Feedback", open=False):
         gr.HTML("""
         <div style="padding: 16px;">
-            <p style="margin-bottom: 16px; color: #374151; line-height: 1.6;">
+            <p class="contact-text">
                 If you have any comments or need assistance regarding the tool, please don't hesitate to contact us:
             </p>
-            <table style="width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; font-size: 0.85rem;">
+            <table class="info-table" style="width: 100%; font-size: 0.85rem;">
                 <thead>
-                    <tr style="background-color: #f8fafc;">
-                        <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Name</th>
-                        <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Post</th>
-                        <th style="padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Extension</th>
+                    <tr>
+                        <th>Name</th>
+                        <th>Post</th>
+                        <th>Extension</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">Max Kwong</td>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">SM(RD)</td>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">1673</td>
+                        <td>Max Kwong</td>
+                        <td>SM(RD)</td>
+                        <td>1673</td>
                     </tr>
                     <tr>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">Oscar So</td>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">M(RD)1</td>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">0858</td>
+                        <td>Oscar So</td>
+                        <td>M(RD)1</td>
+                        <td>0858</td>
                     </tr>
                     <tr>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">Maggie Poon</td>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">AM(RD)1</td>
-                        <td style="padding: 8px 12px; border-bottom: 1px solid #f3f4f6;">0746</td>
+                        <td>Maggie Poon</td>
+                        <td>AM(RD)1</td>
+                        <td>0746</td>
                     </tr>
                     <tr>
-                        <td style="padding: 8px 12px;">Cynwell Lau</td>
-                        <td style="padding: 8px 12px;">AM(RD)3</td>
-                        <td style="padding: 8px 12px;">0460</td>
+                        <td>Cynwell Lau</td>
+                        <td>AM(RD)3</td>
+                        <td>0460</td>
                     </tr>
                 </tbody>
             </table>
@@ -2977,19 +3413,19 @@ def create_sidebar():
     with gr.Accordion("📌 Changelog", open=False):
         gr.HTML("""
         <div style="padding: 16px;">
-            <table style="width: 100%; border-collapse: collapse;">
+            <table class="info-table" style="width: 100%;">
                 <thead>
-                    <tr style="background-color: #f8fafc;">
-                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Date</th>
-                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Version</th>
-                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Notes</th>
+                    <tr>
+                        <th>Date</th>
+                        <th>Version</th>
+                        <th>Notes</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">2025-07-07</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">1.0</td>
-                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">• First release</td>
+                        <td>2025-07-07</td>
+                        <td>1.0</td>
+                        <td>• First release</td>
                     </tr>
                 </tbody>
             </table>
@@ -2999,7 +3435,7 @@ def create_sidebar():
     # Development Settings Section
     with gr.Accordion("⚙️ Development Settings", open=False):
         with gr.Group():
-            gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>AI Backend Configuration</h4>")
+            gr.HTML("<h4 class='sidebar-section-header'>AI Backend Configuration</h4>")
 
             # Backend selection
             backend_selector = gr.Dropdown(
@@ -3029,7 +3465,7 @@ def create_sidebar():
                 info="Maximum tokens for email content sent to AI (longer emails will be truncated)"
             )
 
-            gr.HTML("<h4 style='margin: 16px 0 12px 0; color: #64748b; font-size: 0.9rem;'>Email Parser Configuration</h4>")
+            gr.HTML("<h4 class='sidebar-section-header with-top-margin'>Email Parser Configuration</h4>")
 
             # HTML Parser selection
             parser_selector = gr.Dropdown(
@@ -3042,7 +3478,7 @@ def create_sidebar():
 
             # Parser performance display
             parser_info = gr.HTML(
-                value="<div style='color: #6b7280; font-size: 0.85rem; margin-top: 8px;'>Parser performance information will appear here after processing emails.</div>",
+                value="<div class='parser-info'>Parser performance information will appear here after processing emails.</div>",
                 visible=True
             )
 
@@ -3307,17 +3743,17 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
 
             if error:
                 return gr.update(
-                    value=f"<div style='color: #ef4444; font-size: 0.85rem; margin-top: 8px;'>❌ {error}</div>"
+                    value=f"<div class='parser-info error'>❌ {error}</div>"
                 )
             else:
                 performance_info = get_parser_performance_info(parser_used, parse_time)
                 return gr.update(
-                    value=f"<div style='color: #10b981; font-size: 0.85rem; margin-top: 8px;'>{performance_info} - Parser ready for use</div>"
+                    value=f"<div class='parser-info success'>{performance_info} - Parser ready for use</div>"
                 )
         except Exception as e:
             print(f"Error changing parser: {e}")
             return gr.update(
-                value=f"<div style='color: #ef4444; font-size: 0.85rem; margin-top: 8px;'>❌ Error: {str(e)}</div>"
+                value=f"<div class='parser-info error'>❌ Error: {str(e)}</div>"
             )
 
     def get_backend_health_info():
@@ -3976,10 +4412,8 @@ Key Messages to Include:
                     elif msg_type == 'error':
                         # Handle error from worker thread
                         error_draft = f"""
-                        <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #ef4444;'>
-                            <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #dc2626; text-align: center; padding: 40px 20px; font-size: 11pt;'>
-                                <div style='font-size: 1.1em;'>Generation failed: {content}</div>
-                            </div>
+                        <div class='error-content'>
+                            <div style='font-size: 1.1em;'>Generation failed: {content}</div>
                         </div>
                         """
 
@@ -4053,10 +4487,8 @@ Key Messages to Include:
             print(f"Exception in on_generate_stream: {e}\n{tb}")
 
             error_draft = """
-            <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #ef4444;'>
-                <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #dc2626; text-align: center; padding: 40px 20px; font-size: 11pt;'>
-                    <div style='font-size: 1.1em;'>Generation failed. Please try again.</div>
-                </div>
+            <div class='error-content'>
+                <div style='font-size: 1.1em;'>Generation failed. Please try again.</div>
             </div>
             """
 
