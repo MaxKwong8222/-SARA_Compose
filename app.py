@@ -6,7 +6,6 @@ from bs4 import BeautifulSoup
 import tempfile
 import markdown
 import re
-import base64
 from abc import ABC, abstractmethod
 from typing import Iterator, Tuple
 import fastapi_poe as fp
@@ -21,8 +20,19 @@ ALLOWED_EXTENSIONS = ['.msg']
 # POE API Configuration - Use environment variable for security
 POE_API_KEY = os.getenv("POE_API_KEY", "")
 
+# OpenRouter API Configuration - Use environment variable for security
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+
 # Available Models
 POE_MODELS = ["GPT-4o", "DeepSeek-R1-Distill"]
+OPENROUTER_MODELS = [
+    "deepseek/deepseek-r1-distill-qwen-32b:free",
+    "qwen/qwen3-32b:free",
+    "qwen/qwen3-30b-a3b:free",
+    "google/gemma-3-27b-it:free"
+]
+
+
 
 # Default AI Instructions - comprehensive but concise
 DEFAULT_AI_INSTRUCTIONS = """You are an expert email assistant. Write professional email replies that incorporate the provided key messages.
@@ -32,6 +42,7 @@ FORMATTING REQUIREMENTS:
 - Write only the email body content (no subject line)
 - Use professional greeting and closing with the sender's name
 - Include proper paragraph spacing for readability
+- Bold critical or actionable parts of the reply to draw attention effectively
 
 CONTENT REQUIREMENTS:
 - Address all key messages naturally in the email body
@@ -122,460 +133,208 @@ class POEBackend(AIBackend):
             yield f"POE Backend Error: {str(e)}", True
             return
 
-# Simplified backend manager for POE only
+
+class OpenRouterBackend(AIBackend):
+    """OpenRouter API backend implementation"""
+
+    def __init__(self):
+        self.api_key = OPENROUTER_API_KEY
+        self.base_url = "https://openrouter.ai/api/v1"
+
+    def is_healthy(self) -> bool:
+        """Check if OpenRouter API is available"""
+        return bool(self.api_key)
+
+    def stream_response(self, prompt: str, model: str) -> Iterator[Tuple[str, bool]]:
+        """Stream response from OpenRouter API"""
+        try:
+            if not self.api_key:
+                yield "OpenRouter API key not configured", True
+                return
+
+            if model not in OPENROUTER_MODELS:
+                yield f"Model {model} not available in OpenRouter", True
+                return
+
+            # Import requests here to avoid dependency issues if not installed
+            import requests
+            import json
+
+            # Prepare headers
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://sara-compose.local",
+                "X-Title": "SARA Compose"
+            }
+
+            # Prepare request payload
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": True,
+                "temperature": 0.3,
+                "max_tokens": 2000
+            }
+
+            # Make streaming request
+            url = f"{self.base_url}/chat/completions"
+
+            with requests.post(url, headers=headers, json=payload, stream=True, timeout=30) as response:
+                if response.status_code != 200:
+                    yield f"OpenRouter API Error: {response.status_code} - {response.text}", True
+                    return
+
+                buffer = ""
+                for chunk in response.iter_content(chunk_size=1024, decode_unicode=True):
+                    if not chunk:
+                        continue
+
+                    buffer += chunk
+
+                    # Process complete lines
+                    while '\n' in buffer:
+                        line_end = buffer.find('\n')
+                        line = buffer[:line_end].strip()
+                        buffer = buffer[line_end + 1:]
+
+                        # Skip empty lines and comments
+                        if not line or line.startswith(':'):
+                            continue
+
+                        # Process SSE data lines
+                        if line.startswith('data: '):
+                            data = line[6:]
+
+                            # Check for stream end
+                            if data == '[DONE]':
+                                yield "", True
+                                return
+
+                            try:
+                                # Parse JSON data
+                                data_obj = json.loads(data)
+
+                                # Extract content from delta
+                                if 'choices' in data_obj and len(data_obj['choices']) > 0:
+                                    choice = data_obj['choices'][0]
+                                    if 'delta' in choice and 'content' in choice['delta']:
+                                        content = choice['delta']['content']
+                                        if content:
+                                            yield content, False
+
+                            except json.JSONDecodeError:
+                                # Skip malformed JSON
+                                continue
+
+                # Signal completion if we exit the loop
+                yield "", True
+
+        except ImportError:
+            yield "OpenRouter backend requires 'requests' package. Please install it.", True
+        except Exception as e:
+            yield f"OpenRouter Backend Error: {str(e)}", True
+            return
+
+# Enhanced backend manager supporting multiple backends
 class BackendManager:
-    """Manages POE AI backend for cloud deployment"""
+    """Manages multiple AI backends (POE and OpenRouter)"""
 
     def __init__(self):
         self.poe_backend = POEBackend()
+        self.openrouter_backend = OpenRouterBackend()
+        self.current_backend_type = "poe"  # Default to POE
+
+    def set_backend(self, backend_type: str):
+        """Set the current backend type"""
+        if backend_type in ["poe", "openrouter"]:
+            self.current_backend_type = backend_type
+        else:
+            raise ValueError(f"Unknown backend type: {backend_type}")
 
     def get_current_backend(self) -> AIBackend:
-        """Get the POE backend instance"""
-        return self.poe_backend
+        """Get the current backend instance with fallback logic"""
+        if self.current_backend_type == "poe":
+            return self.poe_backend
+        elif self.current_backend_type == "openrouter":
+            return self.openrouter_backend
+        else:
+            return self.poe_backend  # Fallback to POE
+
+    def get_healthy_backend(self) -> AIBackend:
+        """Get a healthy backend, with automatic fallback if current is unhealthy"""
+        current_backend = self.get_current_backend()
+
+        # If current backend is healthy, use it
+        if current_backend.is_healthy():
+            return current_backend
+
+        # Try fallback backends
+        if self.current_backend_type != "poe" and self.poe_backend.is_healthy():
+            print(f"Warning: {self.current_backend_type} backend unhealthy, falling back to POE")
+            return self.poe_backend
+        elif self.current_backend_type != "openrouter" and self.openrouter_backend.is_healthy():
+            print(f"Warning: {self.current_backend_type} backend unhealthy, falling back to OpenRouter")
+            return self.openrouter_backend
+
+        # If no backends are healthy, return current (will show error to user)
+        print("Warning: No healthy backends available")
+        return current_backend
 
     def is_backend_healthy(self) -> bool:
-        """Check if POE backend is healthy"""
-        return self.poe_backend.is_healthy()
+        """Check if current backend is healthy"""
+        return self.get_current_backend().is_healthy()
+
+    def is_any_backend_healthy(self) -> bool:
+        """Check if any backend is healthy"""
+        return self.poe_backend.is_healthy() or self.openrouter_backend.is_healthy()
 
     def get_available_models(self) -> list:
-        """Get available POE models"""
-        return POE_MODELS
+        """Get available models for current backend"""
+        if self.current_backend_type == "poe":
+            return POE_MODELS
+        elif self.current_backend_type == "openrouter":
+            return OPENROUTER_MODELS
+        else:
+            return POE_MODELS  # Fallback
+
+    def get_backend_status(self) -> dict:
+        """Get status of all backends"""
+        return {
+            "poe": {
+                "healthy": self.poe_backend.is_healthy(),
+                "models": POE_MODELS
+            },
+            "openrouter": {
+                "healthy": self.openrouter_backend.is_healthy(),
+                "models": OPENROUTER_MODELS
+            },
+            "current": self.current_backend_type
+        }
 
 # Initialize backend manager
 backend_manager = BackendManager()
 
-# SARA Framework Integration - CSS and JavaScript
-# Load the working copy button implementation from main SARA app
-def load_copy_button_js():
-    """Load the working copy button JavaScript from the main SARA framework"""
-    try:
-        with open('src/overrideCopyButton.js', 'r', encoding='utf-8') as f:
-            return f.read()
-    except FileNotFoundError:
-        print("Warning: overrideCopyButton.js not found. Copy functionality may not work properly.")
-        return ""
-
-def load_sara_icon_base64():
-    """Load SARA icon as base64 data URL for reliable display with transparency fix"""
-    try:
-        with open('icons/SARA_no_word.png', 'rb') as f:
-            icon_data = f.read()
-            icon_base64 = base64.b64encode(icon_data).decode('utf-8')
-            return f"data:image/png;base64,{icon_base64}"
-    except FileNotFoundError:
-        print("Warning: SARA icon not found. Banner will display without icon.")
-        return ""
-
-copy_button_js = load_copy_button_js()
-sara_icon_data_url = load_sara_icon_base64()
-
-# JavaScript for localStorage persistence - Enhanced version with better Gradio integration
-preferences_js = """
-// SARA Compose Preferences Management - Enhanced Version
-window.saraPreferences = {
-    storageKey: 'sara_compose_preferences',
-
-    // Default values
-    defaults: {
-        user_name: 'Max Kwong',
-        user_email: 'mwmkwong@hkma.gov.hk',
-        ai_instructions: ''
-    },
-
-    // Find preference components using multiple targeting strategies
-    findComponents: function() {
-        const components = {};
-
-        // Strategy 1: Direct element ID targeting with multiple selectors
-        const selectors = {
-            user_name: [
-                '#user-name-input input',
-                '#user-name-input textarea',
-                '[data-testid="textbox"]:has(label:contains("Your Name"))',
-                'input[placeholder*="full name"]'
-            ],
-            user_email: [
-                '#user-email-input input',
-                '#user-email-input textarea',
-                '[data-testid="textbox"]:has(label:contains("Email"))',
-                'input[placeholder*="email"]'
-            ],
-
-            ai_instructions: [
-                '#ai-instructions-textarea textarea',
-                '#ai-instructions-textarea input',
-                '[data-testid="textbox"]:has(label:contains("AI Instructions"))',
-                'textarea[placeholder*="complete instructions"]'
-            ]
-        };
-
-        // Try each selector strategy for each component
-        Object.keys(selectors).forEach(key => {
-            for (const selector of selectors[key]) {
-                try {
-                    const element = document.querySelector(selector);
-                    if (element) {
-                        components[key] = element;
-                        console.log(`✅ Found ${key} using selector: ${selector}`);
-                        break;
-                    }
-                } catch (e) {
-                    // Skip invalid selectors
-                    console.log(`⚠️ Invalid selector for ${key}: ${selector}`);
-                }
-            }
-
-            if (!components[key]) {
-                console.log(`❌ Could not find ${key} with any selector`);
-            }
-        });
-
-        // Strategy 2: Fallback - search by label text within Personal Preferences section
-        if (Object.keys(components).length < 3) {
-            console.log('🔄 Trying fallback strategy - searching by label text');
-            const personalPrefsSection = document.querySelector('.personal-preferences');
-            if (personalPrefsSection) {
-                // Find inputs/selects by their labels - more comprehensive search
-                const allInputs = personalPrefsSection.querySelectorAll('input, select, textarea');
-                console.log(`Found ${allInputs.length} total input elements in Personal Preferences`);
-
-                allInputs.forEach((input, index) => {
-                    // Get the label text from various possible locations
-                    const parentLabel = input.closest('label');
-                    const siblingLabel = input.parentElement?.querySelector('label');
-                    const nearbyLabel = input.parentElement?.parentElement?.querySelector('label');
-
-                    const labelTexts = [
-                        parentLabel?.textContent || '',
-                        siblingLabel?.textContent || '',
-                        nearbyLabel?.textContent || '',
-                        input.placeholder || '',
-                        input.value || '',
-                        input.getAttribute('aria-label') || ''
-                    ].map(text => text.toLowerCase());
-
-                    const allLabelText = labelTexts.join(' ');
-                    console.log(`Input ${index}: type=${input.type || input.tagName}, value="${input.value}", labels="${allLabelText}"`);
-
-                    if (allLabelText.includes('name') && !components.user_name) {
-                        components.user_name = input;
-                        console.log('✅ Found user_name via label fallback');
-                    } else if (allLabelText.includes('email') && !components.user_email) {
-                        components.user_email = input;
-                        console.log('✅ Found user_email via label fallback');
-                    } else if (allLabelText.includes('instructions') && !components.ai_instructions) {
-                        components.ai_instructions = input;
-                        console.log('✅ Found ai_instructions via label fallback');
-                    }
-                });
-            }
-        }
 
 
-        const foundCount = Object.keys(components).length;
-        console.log(`🎯 Final component detection: ${foundCount}/3 components found`);
-        console.log('Components:', Object.entries(components).map(([key, comp]) => `${key}: ${comp ? '✅' : '❌'}`).join(', '));
+def create_bouncing_dots_html(text="Processing"):
+    """Create bouncing dots loading animation HTML"""
+    return f"""
+    <div style="display: flex; align-items: center; justify-content: center; padding: 20px;">
+        <span style="margin-right: 12px; font-weight: 500; color: var(--text-primary);">{text}</span>
+        <div class="bouncing-dots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+        </div>
+    </div>
+    """
 
-        return foundCount > 0 ? components : null;
-    },
 
-    // Save preferences to localStorage
-    save: function() {
-        const components = this.findComponents();
-        if (!components) {
-            console.log('Components not ready for saving');
-            return;
-        }
 
-        const preferences = {};
-        Object.keys(this.defaults).forEach(key => {
-            if (components[key]) {
-                preferences[key] = components[key].value || this.defaults[key];
-            } else {
-                preferences[key] = this.defaults[key];
-            }
-        });
 
-        localStorage.setItem(this.storageKey, JSON.stringify(preferences));
-        console.log('✅ Preferences saved:', preferences);
-    },
 
-    // Load preferences from localStorage
-    load: function() {
-        try {
-            const saved = localStorage.getItem(this.storageKey);
-            if (!saved) {
-                console.log('No saved preferences found, using defaults');
-                return this.defaults;
-            }
 
-            const preferences = JSON.parse(saved);
-            console.log('📥 Loading saved preferences:', preferences);
-
-            const components = this.findComponents();
-            if (!components) {
-                console.log('Components not ready for loading, will retry');
-                return preferences;
-            }
-
-            // Apply saved values to components with enhanced Gradio dropdown handling
-            Object.keys(preferences).forEach(key => {
-                if (components[key] && preferences[key] !== undefined) {
-                    const element = components[key];
-                    const oldValue = element.value;
-                    const newValue = preferences[key];
-
-                    console.log(`🔄 Setting ${key}: "${oldValue}" → "${newValue}"`);
-
-                    // Enhanced value setting for Gradio components
-                    const setValueWithRetry = (retryCount = 0) => {
-                        try {
-                            // Method 1: Direct value assignment
-                            element.value = newValue;
-
-                            // Method 2: For select elements, set selectedIndex
-                            if (element.tagName === 'SELECT') {
-                                const options = Array.from(element.options);
-                                const targetOption = options.find(opt => opt.value === newValue || opt.text === newValue);
-                                if (targetOption) {
-                                    element.selectedIndex = targetOption.index;
-                                    console.log(`📋 Set dropdown ${key} selectedIndex to ${targetOption.index}`);
-                                }
-                            }
-
-                            // Method 3: For Gradio dropdowns, try setting via setAttribute
-                            element.setAttribute('value', newValue);
-
-                            // Method 4: Trigger comprehensive event sequence for Gradio
-                            const events = [
-                                'focus',
-                                'input',
-                                'change',
-                                'blur',
-                                'keyup',
-                                'keydown'
-                            ];
-
-                            events.forEach((eventType, index) => {
-                                setTimeout(() => {
-                                    const event = new Event(eventType, {
-                                        bubbles: true,
-                                        cancelable: true,
-                                        composed: true
-                                    });
-
-                                    // Add additional properties for input events
-                                    if (eventType === 'input' || eventType === 'change') {
-                                        Object.defineProperty(event, 'target', {
-                                            value: element,
-                                            enumerable: true
-                                        });
-                                    }
-
-                                    element.dispatchEvent(event);
-                                    console.log(`📡 Triggered ${eventType} event for ${key}`);
-                                }, index * 50); // Stagger events
-                            });
-
-                            // Method 5: Additional Gradio-specific triggers
-                            setTimeout(() => {
-                                // Try to trigger Gradio's internal update mechanism
-                                if (element._gradio_change) {
-                                    element._gradio_change(newValue);
-                                }
-
-                                // Force a final input event
-                                const finalEvent = new Event('input', { bubbles: true });
-                                element.dispatchEvent(finalEvent);
-
-                                // Verify the value was set
-                                if (element.value === newValue) {
-                                    console.log(`✅ Successfully set ${key}: "${oldValue}" → "${newValue}"`);
-                                } else if (retryCount < 3) {
-                                    console.log(`⚠️ Value not set correctly for ${key}, retrying... (attempt ${retryCount + 1})`);
-                                    setTimeout(() => setValueWithRetry(retryCount + 1), 500);
-                                } else {
-                                    console.log(`❌ Failed to set ${key} after ${retryCount + 1} attempts`);
-                                }
-                            }, 300);
-
-                        } catch (error) {
-                            console.error(`❌ Error setting ${key}:`, error);
-                            if (retryCount < 3) {
-                                setTimeout(() => setValueWithRetry(retryCount + 1), 500);
-                            }
-                        }
-                    };
-
-                    // Start the value setting process
-                    setValueWithRetry();
-                }
-            });
-
-            return preferences;
-        } catch (e) {
-            console.error('❌ Error loading preferences:', e);
-            return this.defaults;
-        }
-    },
-
-    // Debounce function to limit save frequency
-    debounce: function(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
-    },
-
-    // Setup auto-save listeners
-    setupAutoSave: function() {
-        const components = this.findComponents();
-        if (!components) {
-            console.log('Components not ready for auto-save setup');
-            return false;
-        }
-
-        Object.entries(components).forEach(([key, component]) => {
-            if (component) {
-                // Create a debounced save function to avoid excessive saves
-                const debouncedSave = this.debounce(() => {
-                    console.log(`💾 Auto-saving due to ${key} change`);
-                    this.save();
-                }, 500);
-
-                // Remove existing listeners to avoid duplicates
-                const events = ['change', 'input', 'blur'];
-                events.forEach(eventType => {
-                    component.removeEventListener(eventType, debouncedSave);
-                });
-
-                // Add new listeners for multiple events
-                events.forEach(eventType => {
-                    component.addEventListener(eventType, debouncedSave);
-                });
-
-                console.log(`🔗 Setup auto-save listeners for ${key} (${component.tagName})`);
-            }
-        });
-
-        console.log('✅ Auto-save listeners setup complete');
-        return true;
-    },
-
-    // Initialize preferences system with robust retry logic
-    init: function() {
-        console.log('🚀 Initializing SARA Preferences System');
-
-        const attemptInitialization = (attempt = 1, maxAttempts = 10) => {
-            console.log(`🔄 Initialization attempt ${attempt}/${maxAttempts}`);
-
-            const components = this.findComponents();
-            if (components && Object.keys(components).length >= 2) {
-                console.log('✅ Sufficient components found, proceeding with initialization');
-                this.load();
-                this.setupAutoSave();
-                return true;
-            } else {
-                console.log(`⏳ Only ${components ? Object.keys(components).length : 0} components found, retrying...`);
-                if (attempt < maxAttempts) {
-                    const delay = Math.min(1000 * attempt, 5000); // Exponential backoff, max 5s
-                    setTimeout(() => attemptInitialization(attempt + 1, maxAttempts), delay);
-                } else {
-                    console.log('❌ Max initialization attempts reached');
-                }
-                return false;
-            }
-        };
-
-        // Start initialization attempts
-        attemptInitialization();
-    }
-};
-
-// Initialize when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        window.saraPreferences.init();
-    });
-} else {
-    window.saraPreferences.init();
-}
-
-// Also initialize after delays to handle Gradio's dynamic loading
-setTimeout(() => {
-    console.log('🔄 Retrying preferences initialization (2s delay)');
-    window.saraPreferences.init();
-}, 2000);
-
-setTimeout(() => {
-    console.log('🔄 Retrying preferences initialization (5s delay)');
-    window.saraPreferences.init();
-}, 5000);
-
-// Expose functions globally for debugging
-window.savePreferences = () => window.saraPreferences.save();
-window.loadPreferences = () => window.saraPreferences.load();
-window.debugPreferences = () => {
-    console.log('🔍 Debug Preferences System');
-    const components = window.saraPreferences.findComponents();
-    console.log('Components:', components);
-
-    // Detailed component analysis
-    if (components) {
-        Object.entries(components).forEach(([key, element]) => {
-            if (element) {
-                console.log(`${key}:`, {
-                    tagName: element.tagName,
-                    type: element.type,
-                    value: element.value,
-                    id: element.id,
-                    className: element.className,
-                    placeholder: element.placeholder,
-                    'data-testid': element.getAttribute('data-testid')
-                });
-            } else {
-                console.log(`${key}: NOT FOUND`);
-            }
-        });
-    }
-
-    console.log('Current localStorage:', localStorage.getItem('sara_compose_preferences'));
-    return window.saraPreferences;
-};
-
-window.debugPersonalPreferences = () => {
-    console.log('🔍 Debug Personal Preferences Components');
-
-    // Check Personal Preferences section specifically
-    const personalPrefs = document.querySelector('.personal-preferences');
-    if (personalPrefs) {
-        const prefsInputs = personalPrefs.querySelectorAll('input, select, textarea');
-        console.log(`Found ${prefsInputs.length} inputs in Personal Preferences section`);
-
-        prefsInputs.forEach((input, index) => {
-            console.log(`Personal Prefs Input ${index}:`, {
-                tagName: input.tagName,
-                type: input.type,
-                value: input.value,
-                placeholder: input.placeholder,
-                id: input.id,
-                className: input.className
-            });
-        });
-    } else {
-        console.log('❌ Personal Preferences section not found');
-    }
-};
-window.forceInitPreferences = () => {
-    console.log('🔧 Force initializing preferences');
-    window.saraPreferences.init();
-};
-"""
 
 # SARA Framework CSS - Clean, professional design with consistent color scheme
 custom_css = """
@@ -654,87 +413,38 @@ custom_css = """
 
 /* ===== LAYOUT & CONTAINER STYLES ===== */
 .gradio-container {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
-    background: var(--bg-secondary) !important;
-    max-width: 1800px !important;
-    width: 100% !important;
-    margin: 0 auto !important;
-    padding: 20px !important;
-    min-height: 100vh !important;
-    box-sizing: border-box !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-secondary);
+    max-width: 1800px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 20px;
+    min-height: 100vh;
+    box-sizing: border-box;
 }
 
 /* Ensure consistent dashboard width */
 .gradio-container > div {
-    width: 100% !important;
-    min-width: 1200px !important;
+    width: 100%;
+    min-width: 1200px;
 }
 
 /* Main row container for stable layout */
 .main-layout-row {
-    display: flex !important;
-    width: 100% !important;
-    gap: 20px !important;
-    min-height: 600px !important;
-}
-
-/* ===== HEADER STYLES ===== */
-.app-header {
-    background: var(--primary-gradient);
-    border-radius: var(--radius-xl);
-    padding: 24px;
-    text-align: center;
-    margin-bottom: 20px;
-    box-shadow: var(--shadow-lg);
-}
-
-.header-content {
     display: flex;
-    align-items: center;
-    justify-content: center;
+    width: 100%;
     gap: 20px;
-    max-width: 600px;
-    margin: 0 auto;
+    min-height: 600px;
 }
 
-.sara-icon {
-    width: 64px;
-    height: 64px;
-    object-fit: contain;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3)) brightness(1.1) contrast(1.1);
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: var(--radius-lg);
-    padding: 4px;
-}
 
-.header-text {
-    text-align: left;
-}
-
-.main-title {
-    margin: 0;
-    font-size: 2.5rem;
-    font-weight: 700;
-    color: var(--text-inverse);
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-    line-height: 1.1;
-}
-
-.subtitle {
-    margin: 4px 0 0 0;
-    font-size: 1.1rem;
-    font-weight: 400;
-    color: var(--text-inverse);
-    opacity: 0.9;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-}
 
 /* ===== DYNAMIC STATUS INSTRUCTIONS PANEL ===== */
 .status-instructions-panel {
     background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
     border: 1px solid #e2e8f0;
     border-radius: 12px;
-    padding: 24px;
+    padding: 12px;
     margin: 20px 0;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -749,7 +459,7 @@ custom_css = """
 
 .stage {
     flex: 1;
-    padding: 20px;
+    padding: 12px;
     border-radius: 10px;
     border: 2px solid transparent;
     background: rgba(248, 250, 252, 0.6);
@@ -757,6 +467,9 @@ custom_css = """
     position: relative;
     overflow: hidden;
     opacity: 0.5;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .stage::before {
@@ -783,65 +496,135 @@ custom_css = """
     opacity: 1;
 }
 
-.stage.active .stage-icon {
-    animation: pulse 2s infinite;
+/* ===== BANNER EMOJI ANIMATION - WIGGLE DANCE ===== */
+/*
+ * ENHANCED WIGGLE DANCE ANIMATION
+ *
+ * Playful, eye-catching wiggle/shake motion for workflow stage emojis.
+ * Features enhanced visual impact with larger size, stronger rotation,
+ * and vibrant drop-shadow effects.
+ */
+
+/* Enhanced stage icon styling with larger size */
+.stage-icon {
+    font-size: 4rem;
+    margin-right: 12px;
+    transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    filter: grayscale(100%);
+    display: inline-block;
+    line-height: 1;
 }
 
-@keyframes pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.05); }
+.stage.active .stage-icon {
+    filter: grayscale(0%);
+    animation: enhanced-wiggle-dance 1.2s ease-in-out infinite;
+}
+
+/* Enhanced Wiggle Dance Animation - More Intense */
+@keyframes enhanced-wiggle-dance {
+    0%, 100% {
+        transform: rotate(0deg) scale(1);
+        filter: grayscale(0%) drop-shadow(0 0 8px rgba(249, 115, 22, 0.4));
+    }
+    8% {
+        transform: rotate(-5deg) scale(1.05);
+        filter: grayscale(0%) drop-shadow(0 0 15px rgba(249, 115, 22, 0.6));
+    }
+    16% {
+        transform: rotate(5deg) scale(1.08);
+        filter: grayscale(0%) drop-shadow(0 0 20px rgba(249, 115, 22, 0.7));
+    }
+    24% {
+        transform: rotate(-4deg) scale(1.06);
+        filter: grayscale(0%) drop-shadow(0 0 18px rgba(249, 115, 22, 0.65));
+    }
+    32% {
+        transform: rotate(4deg) scale(1.07);
+        filter: grayscale(0%) drop-shadow(0 0 22px rgba(249, 115, 22, 0.75));
+    }
+    40% {
+        transform: rotate(-3deg) scale(1.09);
+        filter: grayscale(0%) drop-shadow(0 0 25px rgba(249, 115, 22, 0.8));
+    }
+    48% {
+        transform: rotate(3deg) scale(1.07);
+        filter: grayscale(0%) drop-shadow(0 0 22px rgba(249, 115, 22, 0.75));
+    }
+    56% {
+        transform: rotate(-4deg) scale(1.05);
+        filter: grayscale(0%) drop-shadow(0 0 18px rgba(249, 115, 22, 0.65));
+    }
+    64% {
+        transform: rotate(4deg) scale(1.06);
+        filter: grayscale(0%) drop-shadow(0 0 20px rgba(249, 115, 22, 0.7));
+    }
+    72% {
+        transform: rotate(-3deg) scale(1.04);
+        filter: grayscale(0%) drop-shadow(0 0 16px rgba(249, 115, 22, 0.6));
+    }
+    80% {
+        transform: rotate(3deg) scale(1.03);
+        filter: grayscale(0%) drop-shadow(0 0 14px rgba(249, 115, 22, 0.55));
+    }
+    88% {
+        transform: rotate(-2deg) scale(1.02);
+        filter: grayscale(0%) drop-shadow(0 0 12px rgba(249, 115, 22, 0.5));
+    }
+    96% {
+        transform: rotate(1deg) scale(1.01);
+        filter: grayscale(0%) drop-shadow(0 0 10px rgba(249, 115, 22, 0.45));
+    }
 }
 
 .stage-header {
     display: flex;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
 }
 
 .stage-number {
-    width: 32px;
-    height: 32px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     background: #e2e8f0;
     color: #64748b;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: 600;
-    font-size: 0.9rem;
+    font-weight: 700;
+    font-size: 1.4rem;
     margin-right: 12px;
     transition: all 0.3s ease;
+    flex-shrink: 0;
 }
 
 .stage.active .stage-number {
     background: #f97316;
     color: white;
-    box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.4);
 }
 
-.stage-icon {
-    font-size: 1.5rem;
-    margin-right: 8px;
-    transition: transform 0.3s ease;
-}
+
 
 .stage-title {
-    font-weight: 600;
+    font-weight: 700;
     color: #1e293b;
-    font-size: 1rem;
+    font-size: 1.4rem;
     margin: 0;
+    line-height: 1.2;
 }
 
 .stage.active .stage-title {
     color: #1e293b;
-    font-weight: 700;
+    font-weight: 800;
 }
 
 .stage-description {
     color: #64748b;
-    font-size: 0.9rem;
+    font-size: 1.1rem;
     line-height: 1.4;
-    margin-top: 8px;
+    margin-top: 6px;
+    font-weight: 500;
 }
 
 .stage.active .stage-description {
@@ -853,15 +636,40 @@ custom_css = """
 @media (max-width: 768px) {
     .workflow-stages {
         flex-direction: column;
-        gap: 12px;
+        gap: 10px;
     }
 
     .stage {
-        padding: 16px;
+        padding: 10px;
     }
 
     .status-instructions-panel {
-        padding: 16px;
+        padding: 10px;
+    }
+
+    .stage-icon {
+        font-size: 3.2rem;
+        margin-right: 10px;
+    }
+
+    .stage-number {
+        width: 40px;
+        height: 40px;
+        font-size: 1.2rem;
+        margin-right: 10px;
+    }
+
+    .stage-title {
+        font-size: 1.2rem;
+    }
+
+    .stage-description {
+        font-size: 1rem;
+        margin-top: 4px;
+    }
+
+    .stage-header {
+        margin-bottom: 6px;
     }
 }
 
@@ -869,27 +677,7 @@ custom_css = """
 
 /* ===== RESPONSIVE DESIGN ===== */
 @media (max-width: 768px) {
-    .header-content {
-        flex-direction: column;
-        gap: 12px;
-    }
 
-    .header-text {
-        text-align: center;
-    }
-
-    .main-title {
-        font-size: 2rem;
-    }
-
-    .subtitle {
-        font-size: 1rem;
-    }
-
-    .sara-icon {
-        width: 48px;
-        height: 48px;
-    }
 }
 
 /* ===== CARD COMPONENTS ===== */
@@ -1020,75 +808,69 @@ custom_css = """
 }
 
 .email-body a {
-    color: #0066cc !important;
+    color: #0066cc;
     text-decoration: none;
     transition: var(--transition-fast);
 }
 
 .email-body a:hover {
-    color: #004499 !important;
+    color: #004499;
     text-decoration: underline;
 }
 
 /* ===== ACCORDION COMPONENTS ===== */
-.think-section {
-    margin: 16px 0;
-    border: 1px solid var(--warning-color);
-    border-radius: var(--radius-md);
-    background: var(--bg-accent);
-}
 
 /* Accordion Content Styling */
 .gradio-accordion .accordion-content,
 .gradio-accordion [data-testid="accordion-content"] {
-    max-height: 400px !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    padding: 12px !important;
-    scrollbar-width: thin !important;
-    scrollbar-color: var(--border-secondary) var(--bg-secondary) !important;
+    max-height: 400px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-secondary) var(--bg-secondary);
 }
 
 /* Accordion Scrollbar Styling */
 .gradio-accordion .accordion-content::-webkit-scrollbar,
 .gradio-accordion [data-testid="accordion-content"]::-webkit-scrollbar {
-    width: 6px !important;
+    width: 6px;
 }
 
 .gradio-accordion .accordion-content::-webkit-scrollbar-track,
 .gradio-accordion [data-testid="accordion-content"]::-webkit-scrollbar-track {
-    background: var(--bg-secondary) !important;
-    border-radius: var(--radius-sm) !important;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
 }
 
 .gradio-accordion .accordion-content::-webkit-scrollbar-thumb,
 .gradio-accordion [data-testid="accordion-content"]::-webkit-scrollbar-thumb {
-    background: var(--border-secondary) !important;
-    border-radius: var(--radius-sm) !important;
+    background: var(--border-secondary);
+    border-radius: var(--radius-sm);
 }
 
 .gradio-accordion .accordion-content::-webkit-scrollbar-thumb:hover,
 .gradio-accordion [data-testid="accordion-content"]::-webkit-scrollbar-thumb:hover {
-    background: var(--text-light) !important;
+    background: var(--text-light);
 }
 
 /* Accordion Container Fixes */
 .gradio-accordion {
-    overflow: visible !important;
-    transition: var(--transition-slow) !important;
+    overflow: visible;
+    transition: var(--transition-slow);
 }
 
 .email-preview-column {
-    overflow: visible !important;
+    overflow: visible;
 }
 
 .email-preview-column .gradio-accordion {
-    overflow: visible !important;
+    overflow: visible;
 }
 
 .email-preview-column .gradio-accordion .accordion-content {
-    overflow: visible !important;
-    max-height: none !important;
+    overflow: visible;
+    max-height: none;
 }
 
 /* Accordion Animations */
@@ -1110,48 +892,72 @@ custom_css = """
 .gradio-accordion .accordion-trigger,
 div[data-testid="accordion"] button,
 div[data-testid="accordion"] .label-wrap {
-    font-weight: 700 !important;
+    font-weight: 700;
 }
 
 .gradio-accordion .label-wrap span,
 .gradio-accordion button span,
 div[data-testid="accordion"] .label-wrap span {
-    font-weight: 700 !important;
-    font-size: 1rem !important;
+    font-weight: 700;
+    font-size: 1rem;
 }
 
 /* Thinking Content Styling */
 .gradio-accordion .accordion-content,
 .gradio-accordion [data-testid="accordion-content"] {
-    color: var(--text-muted) !important;
-    font-family: 'Microsoft Sans Serif', sans-serif !important;
-    font-size: 11pt !important;
+    color: var(--text-muted);
+    font-family: 'Microsoft Sans Serif', sans-serif;
+    font-size: 11pt;
 }
 
 .gradio-accordion .accordion-content p,
 .gradio-accordion [data-testid="accordion-content"] p,
 .gradio-accordion .accordion-content div,
 .gradio-accordion [data-testid="accordion-content"] div {
-    color: var(--text-muted) !important;
-    font-family: 'Microsoft Sans Serif', sans-serif !important;
-    font-size: 11pt !important;
+    color: var(--text-muted);
+    font-family: 'Microsoft Sans Serif', sans-serif;
+    font-size: 11pt;
 }
 
 /* Key Messages Accordion Styling */
 .key-messages-accordion {
-    margin-bottom: 16px !important;
+    margin-bottom: 0;
 }
 
 .key-messages-accordion .gradio-accordion {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border-secondary) !important;
-    box-shadow: var(--shadow-sm) !important;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-secondary);
+}
+
+.key-messages-accordion .gradio-accordion-header {
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Remove grey padding/margin from key messages card container */
+.key-messages-accordion .gradio-accordion > div {
+    padding-bottom: 0;
+    margin-bottom: 0;
+}
+
+/* Inline Generate Button Styling */
+.generate-button-inline {
+    margin-top: 16px;
+    margin-bottom: 0;
+    width: 100%;
+}
+
+/* Remove extra spacing from card container for key messages */
+.card {
+    margin-bottom: 8px;
+    padding-bottom: 12px;
 }
 
 /* Generate Button Section Styling */
 .generate-button-section {
-    margin-top: 16px !important;
-    margin-bottom: 16px !important;
+    margin-top: 16px;
+    margin-bottom: 16px;
     text-align: center;
 }
 
@@ -1162,6 +968,108 @@ div[data-testid="accordion"] .label-wrap span {
     border: 2px dashed var(--primary-color);
     border-radius: var(--radius-lg);
     background: var(--bg-accent);
+}
+
+/* Custom Download Button Styling */
+.custom-download-button {
+    margin: 0;
+    width: 100%;
+}
+
+.custom-download-button button {
+    width: 100%;
+    padding: 16px 24px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    border: none;
+    border-radius: var(--radius-lg);
+    color: white;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.custom-download-button button:hover {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    box-shadow: 0 8px 25px rgba(16, 185, 129, 0.5);
+}
+
+.custom-download-button button:active {
+    transform: scale(0.95);
+    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
+}
+
+.custom-download-button button:active {
+    transform: translateY(0px);
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.custom-download-button button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+.custom-download-button button:hover::before {
+    left: 100%;
+}
+
+/* Subtle pulse animation when button first appears */
+@keyframes downloadButtonPulse {
+    0% {
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+    50% {
+        box-shadow: 0 4px 20px rgba(16, 185, 129, 0.5);
+    }
+    100% {
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    }
+}
+
+.custom-download-button button {
+    animation: downloadButtonPulse 2s ease-in-out 3;
+}
+
+/* Download button within draft accordion styling - Remove spacing */
+.draft-download-button {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* Ensure no spacing between draft content and download button */
+.draft-accordion .gradio-accordion > div > div {
+    gap: 0;
+}
+
+.draft-accordion .gradio-html + .gradio-downloadbutton {
+    margin-top: 0;
+}
+
+/* Remove any default spacing from the draft accordion container */
+.draft-accordion .gradio-accordion > div {
+    padding-bottom: 0;
+}
+
+/* Ensure seamless connection between response and download button */
+.draft-accordion .gradio-html {
+    margin-bottom: 0 !important;
+}
+
+.draft-accordion .gradio-downloadbutton {
+    margin-top: 0 !important;
+}
+
+/* Remove any gap in the flex container */
+.draft-accordion .gradio-accordion > div > div > div {
+    gap: 0 !important;
 }
 
 
@@ -1179,7 +1087,6 @@ div[data-testid="accordion"] .label-wrap span {
 
 .upload-panel-collapsed:hover {
     background: var(--bg-tertiary);
-    box-shadow: var(--shadow-sm);
 }
 
 .upload-panel-header {
@@ -1239,8 +1146,6 @@ div[data-testid="accordion"] .label-wrap span {
 .email-drop-zone:hover {
     border-color: var(--primary-color);
     background: linear-gradient(135deg, var(--bg-accent) 0%, var(--bg-secondary) 100%);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-lg);
 }
 
 .drop-zone-content {
@@ -1296,14 +1201,7 @@ div[data-testid="accordion"] .label-wrap span {
     text-align: center;
 }
 
-.thinking-section {
-    background: var(--bg-primary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-lg);
-    padding: 0;
-    margin-bottom: 6px;
-    box-shadow: var(--shadow-sm);
-}
+
 
 
 
@@ -1313,6 +1211,7 @@ div[data-testid="accordion"] .label-wrap span {
     overflow-y: auto;
     background: var(--background);
     border-radius: 8px;
+    margin-bottom: 0;
 }
 
 .output-panel-container::-webkit-scrollbar {
@@ -1333,6 +1232,7 @@ div[data-testid="accordion"] .label-wrap span {
     padding: 20px;
     background: var(--background);
     margin: 0;
+    margin-bottom: 0;
     border-radius: 8px;
 }
 
@@ -1372,11 +1272,11 @@ div[data-testid="accordion"] .label-wrap span {
 }
 
 .draft-content p {
-    margin: 12px 0;
+    margin: 0; /* Remove default margins - inline styles handle Outlook-compatible spacing */
 }
 
 .draft-content a {
-    color: #0066cc !important;
+    color: #0066cc;
     text-decoration: none;
 }
 
@@ -1419,7 +1319,7 @@ div[data-testid="accordion"] .label-wrap span {
 }
 
 .reply-content p {
-    margin: 12px 0;
+    margin: 0; /* Remove default margins - inline styles handle Outlook-compatible spacing */
 }
 
 .reply-content strong {
@@ -1509,29 +1409,29 @@ div[data-testid="accordion"] .label-wrap span {
 .email-preview-column {
     margin-right: 16px; /* Right margin for spacing from controls column */
     flex: 1.5; /* Larger proportion for maximum content visibility */
-    min-width: 600px !important; /* Ensure stable minimum width */
-    width: 60% !important; /* Fixed percentage width for consistency */
+    min-width: 600px; /* Ensure stable minimum width */
+    width: 60%; /* Fixed percentage width for consistency */
 }
 
 /* Right column for all controls - optimized workflow */
 .rhs-controls-column {
     margin-left: 8px; /* Left margin for spacing from preview column */
     flex: 1; /* Smaller proportion to maximize preview space */
-    min-width: 400px !important; /* Ensure adequate space for controls */
-    width: 40% !important; /* Fixed percentage width for consistency */
-    max-width: 500px !important; /* Prevent excessive expansion */
+    min-width: 400px; /* Ensure adequate space for controls */
+    width: 40%; /* Fixed percentage width for consistency */
+    max-width: 500px; /* Prevent excessive expansion */
 }
 
 /* Stable accordion containers */
 .gradio-accordion {
-    min-height: 60px !important; /* Minimum height to prevent layout shifts */
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    min-height: 60px; /* Minimum height to prevent layout shifts */
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Ensure stable content areas */
 .draft-display-area, .original-email-display-area {
-    min-height: 200px !important;
-    transition: all 0.3s ease !important;
+    min-height: 200px;
+    transition: all 0.3s ease;
 }
 
 /* Integrated file upload styling */
@@ -1553,72 +1453,78 @@ div[data-testid="accordion"] .label-wrap span {
 
 /* Enhanced spacing for 2-column layout with improved transitions */
 .rhs-controls-column .gradio-group {
-    margin-bottom: 16px !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    transform-origin: top !important;
+    margin-bottom: 16px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: top;
 }
 
 .rhs-controls-column .gradio-group:last-child {
-    margin-bottom: 0 !important;
+    margin-bottom: 0;
 }
 
 /* Remove margin from actions section to prevent gaps when hidden */
 .rhs-controls-column .actions-section {
-    margin-bottom: 0 !important;
+    margin-bottom: 0;
 }
 
 /* Ensure clean layout when hidden elements don't create gaps */
 .rhs-controls-column .gradio-group[style*="display: none"],
 .rhs-controls-column .gradio-group[style*="visibility: hidden"] {
-    margin-bottom: 0 !important;
-    margin-top: 0 !important;
+    margin-bottom: 0;
+    margin-top: 0;
 }
 
 /* Section transition animations */
 .section-transition {
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    transform-origin: top !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: top;
 }
 
 
 
 
 
-/* Action buttons styling - matching Generate Reply button with royal blue theme */
+/* Action buttons styling - Enhanced with animations */
 .action-button,
 button.action-button,
 .gradio-button.action-button {
-    background: var(--accent-gradient) !important;
-    border: none !important;
-    color: var(--text-inverse) !important;
-    padding: 12px 24px !important;
-    font-size: 1rem !important;
-    font-weight: 600 !important;
-    border-radius: var(--radius-lg) !important;
-    margin: 0 !important;
-    min-width: 160px !important;
-    transition: var(--transition-slow) !important;
-    box-shadow: var(--shadow-sm) !important;
+    background: var(--accent-gradient);
+    border: none;
+    color: var(--text-inverse);
+    padding: 12px 24px;
+    font-size: 1rem;
+    font-weight: 600;
+    border-radius: var(--radius-lg);
+    margin: 0;
+    min-width: 160px;
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
+    box-shadow: var(--shadow-sm);
     /* Override any parent container backgrounds */
-    position: relative !important;
-    z-index: 10 !important;
+    position: relative;
+    z-index: 10;
 }
 
 .action-button:hover,
 button.action-button:hover,
 .gradio-button.action-button:hover {
-    background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent-light) 100%) !important;
-    transform: translateY(-2px) !important;
-    box-shadow: var(--shadow-lg) !important;
-    border: none !important;
-    color: var(--text-inverse) !important;
+    background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent-light) 100%);
+    box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
+    border: none;
+    color: var(--text-inverse);
+}
+
+.action-button:active,
+button.action-button:active,
+.gradio-button.action-button:active {
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
 }
 
 /* Widescreen layout optimizations for 2-column design */
 @media (min-width: 1440px) {
     .gradio-container {
-        max-width: 2000px !important; /* Even wider for large monitors */
-        padding: 24px !important;
+        max-width: 2000px; /* Even wider for large monitors */
+        padding: 24px;
     }
 
     .email-preview-column {
@@ -1635,8 +1541,8 @@ button.action-button:hover,
 /* Ultra-wide monitor support for 2-column design */
 @media (min-width: 1920px) {
     .gradio-container {
-        max-width: 2400px !important;
-        padding: 32px !important;
+        max-width: 2400px;
+        padding: 32px;
     }
 
     .email-preview-column {
@@ -1650,28 +1556,252 @@ button.action-button:hover,
     }
 }
 
-/* ===== LEGACY STYLES CLEANUP ===== */
-.card:hover {
-    box-shadow: var(--shadow-medium);
-    transform: translateY(-1px);
+/* ===== ANIMATION SYSTEM ===== */
+/* Animation Variables */
+:root {
+    --anim-duration-fast: 0.15s;
+    --anim-duration-normal: 0.3s;
+    --anim-duration-slow: 0.5s;
+    --anim-easing-cubic: cubic-bezier(0.4, 0, 0.2, 1);
+    --anim-easing-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
 }
+
+/* Accessibility - Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms;
+        animation-iteration-count: 1;
+        transition-duration: 0.01ms;
+    }
+
+    .btn-hover-scale:hover,
+    .btn-press-animation:active {
+        box-shadow: none;
+    }
+
+    .bouncing-dots .dot {
+        animation: none;
+    }
+
+    /* Disable banner emoji animations for reduced motion */
+    .stage.active .stage-icon {
+        animation: none;
+        transform: none;
+        filter: grayscale(0%) drop-shadow(0 0 8px rgba(249, 115, 22, 0.3));
+        font-size: 4rem;
+    }
+
+    /* Disable card hover animations for reduced motion */
+    .upload-accordion::before,
+    .draft-accordion::before,
+    .original-accordion::before,
+    .thinking-accordion::before,
+    .key-messages-accordion::before,
+    .personal-preferences::before,
+    .disclaimer::before,
+    .support-feedback::before,
+    .changelog::before,
+    .dev-settings::before {
+        transition: none;
+        opacity: 0;
+    }
+
+    .upload-accordion:hover::before,
+    .draft-accordion:hover::before,
+    .original-accordion:hover::before,
+    .thinking-accordion:hover::before,
+    .key-messages-accordion:hover::before,
+    .personal-preferences:hover::before,
+    .disclaimer:hover::before,
+    .support-feedback:hover::before,
+    .changelog:hover::before,
+    .dev-settings:hover::before {
+        opacity: 0;
+    }
+}
+
+/* Button Animations */
+.btn-hover-scale {
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
+}
+
+.btn-hover-scale:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+.btn-press-animation:active {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    transform: scale(0.95);
+    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
+}
+
+/* Bouncing Dots Loading Animation */
+.bouncing-dots {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    margin: 0 8px;
+}
+
+.bouncing-dots .dot {
+    width: 8px;
+    height: 8px;
+    background: var(--primary-color);
+    border-radius: 50%;
+    animation: bounce-dot 1.4s ease-in-out infinite both;
+}
+
+.bouncing-dots .dot:nth-child(1) { animation-delay: -0.32s; }
+.bouncing-dots .dot:nth-child(2) { animation-delay: -0.16s; }
+.bouncing-dots .dot:nth-child(3) { animation-delay: 0s; }
+
+@keyframes bounce-dot {
+    0%, 80%, 100% { transform: scale(0); }
+    40% { transform: scale(1); }
+}
+
+/* Container/Block Animations */
+.card-hover-scale,
+.container-hover-scale {
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
+}
+
+.card-hover-scale:hover,
+.container-hover-scale:hover {
+    /* Removed shadow effects for cleaner appearance */
+    box-shadow: none;
+    -webkit-box-shadow: none;
+    -moz-box-shadow: none;
+}
+
+/* Enhanced Card Styling */
+.card {
+    background: white;
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    border: 1px solid var(--border-secondary);
+    position: relative;
+    overflow: hidden;
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
+    margin-bottom: 8px;
+}
+
+.card:hover {
+    /* Removed shadow effects for cleaner appearance */
+}
+
+/* Card with collapsible functionality */
+.collapsible-card {
+    background: white;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-secondary);
+    position: relative;
+    overflow: hidden;
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
+    margin-bottom: 8px;
+}
+
+.collapsible-card:hover {
+    /* Removed shadow effects for cleaner appearance */
+}
+
+/* Card header with animated top border */
+.collapsible-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+    opacity: 0;
+    transition: opacity var(--anim-duration-normal) ease;
+}
+
+.collapsible-card:hover::before {
+    opacity: 1;
+}
+
+/* Card header styling */
+.card-header {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border-bottom: 1px solid var(--border-secondary);
+    padding: 16px 20px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.card-header:hover {
+    background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+}
+
+/* Card content styling */
+.card-content {
+    padding: 0;
+    overflow: hidden;
+    transition: max-height var(--anim-duration-normal) var(--anim-easing-cubic);
+}
+
+.card-content.collapsed {
+    max-height: 0;
+}
+
+.card-content.expanded {
+    max-height: 2000px;
+}
+
+/* Card content inner padding */
+.card-content-inner {
+    padding: 20px;
+}
+
+/* ===== LEGACY STYLES CLEANUP ===== */
 
 /* ===== BUTTON COMPONENTS ===== */
 /* Override Gradio's primary button styling for action buttons */
 .primary.action-button,
 button.primary.action-button {
-    background: var(--accent-gradient) !important;
-    border: none !important;
-    color: var(--text-inverse) !important;
-    box-shadow: var(--shadow-sm) !important;
+    background: var(--accent-gradient);
+    border: none;
+    color: var(--text-inverse);
+    box-shadow: var(--shadow-sm);
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
 }
 
 .primary.action-button:hover,
 button.primary.action-button:hover {
-    background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent-light) 100%) !important;
-    border: none !important;
-    color: var(--text-inverse) !important;
-    box-shadow: var(--shadow-lg) !important;
+    background: linear-gradient(135deg, var(--accent-hover) 0%, var(--accent-light) 100%);
+    border: none;
+    color: var(--text-inverse);
+    box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
+}
+
+.primary.action-button:active,
+button.primary.action-button:active {
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
+}
+
+/* Apply animations to all buttons */
+button,
+.gradio-button {
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
+}
+
+button:hover,
+.gradio-button:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+button:active,
+.gradio-button:active {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    transition: all var(--anim-duration-fast) var(--anim-easing-cubic);
 }
 
 /* ===== PERSONAL PREFERENCES ===== */
@@ -1681,15 +1811,14 @@ button.primary.action-button:hover {
 }
 
 .personal-preferences .gradio-accordion {
-    background: linear-gradient(135deg, #fef7ff 0%, #f3e8ff 100%) !important;
-    border: 1px solid #d8b4fe !important;
-    box-shadow: var(--shadow-sm) !important;
+    background: linear-gradient(135deg, #fef7ff 0%, #f3e8ff 100%);
+    border: 1px solid #d8b4fe;
 }
 
 .personal-preferences .gradio-accordion .label-wrap,
 .personal-preferences .gradio-accordion button {
-    background: linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%) !important;
-    color: #7c3aed !important;
+    background: linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%);
+    color: #7c3aed;
 }
 
 /* ===== AI INSTRUCTIONS STYLING ===== */
@@ -1702,7 +1831,7 @@ button.primary.action-button:hover {
     border: 1px solid #e2e8f0;
     background-color: #f8fafc;
 }
-    font-weight: 600 !important;
+    font-weight: 600;
 }
 
 /* ===== DEVELOPMENT SETTINGS ===== */
@@ -1722,9 +1851,6 @@ button.primary.action-button:hover {
 }
 
 /* Right column controls optimization */
-.rhs-controls-column .thinking-section {
-    margin: 16px 0 !important;
-}
 
 /* Draft placeholder styling */
 .draft-placeholder {
@@ -1824,6 +1950,8 @@ button.primary.action-button:hover {
 .draft-display-area {
     min-height: 300px;
     overflow: visible;
+    margin-bottom: 0;
+    padding-bottom: 0;
 }
 
 .original-email-display-area {
@@ -1834,73 +1962,269 @@ button.primary.action-button:hover {
 /* Remove redundant scrollbar styling to prevent conflicts */
 /* Scrolling will be handled by parent containers only */
 
-/* Accordion styling for progressive disclosure */
-.upload-accordion {
-    margin-bottom: 16px !important;
+/* Accordion styling for progressive disclosure - Enhanced Card-like Design */
+.upload-accordion,
+.draft-accordion,
+.original-accordion,
+.thinking-accordion,
+.key-messages-accordion,
+.personal-preferences,
+.disclaimer,
+.support-feedback,
+.changelog,
+.dev-settings {
+    margin-bottom: 8px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-secondary);
+    background: white;
+    overflow: hidden;
+    position: relative;
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
 }
 
-.draft-accordion {
-    margin-bottom: 16px !important;
+.upload-accordion:hover,
+.draft-accordion:hover,
+.original-accordion:hover,
+.thinking-accordion:hover,
+.key-messages-accordion:hover,
+.personal-preferences:hover,
+.disclaimer:hover,
+.support-feedback:hover,
+.changelog:hover,
+.dev-settings:hover {
+    /* Removed shadow effects for cleaner appearance */
 }
 
-.original-accordion {
-    margin-bottom: 16px !important;
-}
-
-/* Accordion header styling */
-.upload-accordion .gradio-accordion-header {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%) !important;
-    border: 2px solid #bae6fd !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-}
-
-.draft-accordion .gradio-accordion-header {
-    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
-    border: 2px solid #a7f3d0 !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-}
-
-.original-accordion .gradio-accordion-header {
-    background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%) !important;
-    border: 2px solid #e5e7eb !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-}
-
-/* Accordion content styling */
-.upload-accordion .gradio-accordion-content,
-.draft-accordion .gradio-accordion-content,
-.original-accordion .gradio-accordion-content {
-    border: none !important;
-    border-radius: 0 0 8px 8px !important;
-    padding: 0 !important;
-}
-
-
-
-/* Enhanced visual hierarchy improvements */
-.card {
+/* Enhanced Card-like Accordion Headers with Animated Top Border */
+.upload-accordion .gradio-accordion-header,
+.draft-accordion .gradio-accordion-header,
+.original-accordion .gradio-accordion-header,
+.thinking-accordion .gradio-accordion-header,
+.key-messages-accordion .gradio-accordion-header,
+.personal-preferences .gradio-accordion-header,
+.disclaimer .gradio-accordion-header,
+.support-feedback .gradio-accordion-header,
+.changelog .gradio-accordion-header,
+.dev-settings .gradio-accordion-header {
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+    border: none;
+    border-radius: 0;
+    font-weight: 600;
+    transition: all var(--anim-duration-normal) var(--anim-easing-cubic);
     position: relative;
     overflow: hidden;
+    padding: 16px 20px;
 }
 
-.card::before {
+/* Animated top border effect for all accordion headers */
+.upload-accordion::before,
+.draft-accordion::before,
+.original-accordion::before,
+.thinking-accordion::before,
+.key-messages-accordion::before,
+.personal-preferences::before,
+.disclaimer::before,
+.support-feedback::before,
+.changelog::before,
+.dev-settings::before {
     content: '';
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     height: 3px;
-    background: linear-gradient(90deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+    background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
     opacity: 0;
-    transition: opacity 0.3s ease;
+    transition: opacity var(--anim-duration-normal) ease;
+    z-index: 10;
 }
 
-.card:hover::before {
+.upload-accordion:hover::before,
+.draft-accordion:hover::before,
+.original-accordion:hover::before,
+.thinking-accordion:hover::before,
+.key-messages-accordion:hover::before,
+.personal-preferences:hover::before,
+.disclaimer:hover::before,
+.support-feedback:hover::before,
+.changelog:hover::before,
+.dev-settings:hover::before {
     opacity: 1;
 }
+
+/* Standardized orange gradient for all accordion hover borders */
+.upload-accordion::before,
+.draft-accordion::before,
+.original-accordion::before,
+.thinking-accordion::before,
+.key-messages-accordion::before,
+.personal-preferences::before,
+.disclaimer::before,
+.support-feedback::before,
+.changelog::before,
+.dev-settings::before {
+    background: linear-gradient(90deg, #f59e0b 0%, #d97706 100%);
+}
+
+/* Accordion content styling */
+.upload-accordion .gradio-accordion-content,
+.draft-accordion .gradio-accordion-content,
+.original-accordion .gradio-accordion-content,
+.thinking-accordion .gradio-accordion-content,
+.key-messages-accordion .gradio-accordion-content,
+.personal-preferences .gradio-accordion-content,
+.disclaimer .gradio-accordion-content,
+.support-feedback .gradio-accordion-content,
+.changelog .gradio-accordion-content,
+.dev-settings .gradio-accordion-content {
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    background: white;
+}
+
+/* COMPREHENSIVE SHADOW REMOVAL - Override all possible Gradio default shadows */
+.upload-accordion,
+.draft-accordion,
+.original-accordion,
+.thinking-accordion,
+.key-messages-accordion,
+.personal-preferences,
+.disclaimer,
+.support-feedback,
+.changelog,
+.dev-settings,
+.upload-accordion .gradio-accordion,
+.draft-accordion .gradio-accordion,
+.original-accordion .gradio-accordion,
+.thinking-accordion .gradio-accordion,
+.key-messages-accordion .gradio-accordion,
+.personal-preferences .gradio-accordion,
+.disclaimer .gradio-accordion,
+.support-feedback .gradio-accordion,
+.changelog .gradio-accordion,
+.dev-settings .gradio-accordion,
+.upload-accordion .gradio-accordion:hover,
+.draft-accordion .gradio-accordion:hover,
+.original-accordion .gradio-accordion:hover,
+.thinking-accordion .gradio-accordion:hover,
+.key-messages-accordion .gradio-accordion:hover,
+.personal-preferences .gradio-accordion:hover,
+.disclaimer .gradio-accordion:hover,
+.support-feedback .gradio-accordion:hover,
+.changelog .gradio-accordion:hover,
+.dev-settings .gradio-accordion:hover,
+.upload-accordion .gradio-accordion-header,
+.draft-accordion .gradio-accordion-header,
+.original-accordion .gradio-accordion-header,
+.thinking-accordion .gradio-accordion-header,
+.key-messages-accordion .gradio-accordion-header,
+.personal-preferences .gradio-accordion-header,
+.disclaimer .gradio-accordion-header,
+.support-feedback .gradio-accordion-header,
+.changelog .gradio-accordion-header,
+.dev-settings .gradio-accordion-header,
+.upload-accordion .gradio-accordion-header:hover,
+.draft-accordion .gradio-accordion-header:hover,
+.original-accordion .gradio-accordion-header:hover,
+.thinking-accordion .gradio-accordion-header:hover,
+.key-messages-accordion .gradio-accordion-header:hover,
+.personal-preferences .gradio-accordion-header:hover,
+.disclaimer .gradio-accordion-header:hover,
+.support-feedback .gradio-accordion-header:hover,
+.changelog .gradio-accordion-header:hover,
+.dev-settings .gradio-accordion-header:hover,
+.upload-accordion .gradio-accordion-content,
+.draft-accordion .gradio-accordion-content,
+.original-accordion .gradio-accordion-content,
+.thinking-accordion .gradio-accordion-content,
+.key-messages-accordion .gradio-accordion-content,
+.personal-preferences .gradio-accordion-content,
+.disclaimer .gradio-accordion-content,
+.support-feedback .gradio-accordion-content,
+.changelog .gradio-accordion-content,
+.dev-settings .gradio-accordion-content,
+.upload-accordion .gradio-accordion-content:hover,
+.draft-accordion .gradio-accordion-content:hover,
+.original-accordion .gradio-accordion-content:hover,
+.thinking-accordion .gradio-accordion-content:hover,
+.key-messages-accordion .gradio-accordion-content:hover,
+.personal-preferences .gradio-accordion-content:hover,
+.disclaimer .gradio-accordion-content:hover,
+.support-feedback .gradio-accordion-content:hover,
+.changelog .gradio-accordion-content:hover,
+.dev-settings .gradio-accordion-content:hover,
+.upload-accordion .label-wrap,
+.draft-accordion .label-wrap,
+.original-accordion .label-wrap,
+.thinking-accordion .label-wrap,
+.key-messages-accordion .label-wrap,
+.personal-preferences .label-wrap,
+.disclaimer .label-wrap,
+.support-feedback .label-wrap,
+.changelog .label-wrap,
+.dev-settings .label-wrap,
+.upload-accordion .label-wrap:hover,
+.draft-accordion .label-wrap:hover,
+.original-accordion .label-wrap:hover,
+.thinking-accordion .label-wrap:hover,
+.key-messages-accordion .label-wrap:hover,
+.personal-preferences .label-wrap:hover,
+.disclaimer .label-wrap:hover,
+.support-feedback .label-wrap:hover,
+.changelog .label-wrap:hover,
+.dev-settings .label-wrap:hover,
+.upload-accordion [data-testid="accordion"],
+.draft-accordion [data-testid="accordion"],
+.original-accordion [data-testid="accordion"],
+.thinking-accordion [data-testid="accordion"],
+.key-messages-accordion [data-testid="accordion"],
+.personal-preferences [data-testid="accordion"],
+.disclaimer [data-testid="accordion"],
+.support-feedback [data-testid="accordion"],
+.changelog [data-testid="accordion"],
+.dev-settings [data-testid="accordion"],
+.upload-accordion [data-testid="accordion"]:hover,
+.draft-accordion [data-testid="accordion"]:hover,
+.original-accordion [data-testid="accordion"]:hover,
+.thinking-accordion [data-testid="accordion"]:hover,
+.key-messages-accordion [data-testid="accordion"]:hover,
+.personal-preferences [data-testid="accordion"]:hover,
+.disclaimer [data-testid="accordion"]:hover,
+.support-feedback [data-testid="accordion"]:hover,
+.changelog [data-testid="accordion"]:hover,
+.dev-settings [data-testid="accordion"]:hover,
+.upload-accordion [data-testid="accordion-header"],
+.draft-accordion [data-testid="accordion-header"],
+.original-accordion [data-testid="accordion-header"],
+.thinking-accordion [data-testid="accordion-header"],
+.key-messages-accordion [data-testid="accordion-header"],
+.personal-preferences [data-testid="accordion-header"],
+.disclaimer [data-testid="accordion-header"],
+.support-feedback [data-testid="accordion-header"],
+.changelog [data-testid="accordion-header"],
+.dev-settings [data-testid="accordion-header"],
+.upload-accordion [data-testid="accordion-header"]:hover,
+.draft-accordion [data-testid="accordion-header"]:hover,
+.original-accordion [data-testid="accordion-header"]:hover,
+.thinking-accordion [data-testid="accordion-header"]:hover,
+.key-messages-accordion [data-testid="accordion-header"]:hover,
+.personal-preferences [data-testid="accordion-header"]:hover,
+.disclaimer [data-testid="accordion-header"]:hover,
+.support-feedback [data-testid="accordion-header"]:hover,
+.changelog [data-testid="accordion-header"]:hover,
+.dev-settings [data-testid="accordion-header"]:hover {
+    box-shadow: none;
+    -webkit-box-shadow: none;
+    -moz-box-shadow: none;
+    filter: none;
+}
+
+
+
+
+
+
 
 /* Improved empty state styling */
 .empty-state {
@@ -1919,8 +2243,11 @@ button.primary.action-button:hover {
 """
 
 # Initialize backend manager on app start
-print("Initializing AI backend...")
-print(f"POE backend healthy: {backend_manager.poe_backend.is_healthy()}")
+print("Initializing AI backends...")
+backend_status = backend_manager.get_backend_status()
+print(f"POE backend healthy: {backend_status['poe']['healthy']}")
+print(f"OpenRouter backend healthy: {backend_status['openrouter']['healthy']}")
+print(f"Current backend: {backend_status['current']}")
 print("Backend initialization complete.")
 
 def validate_file(file):
@@ -1953,11 +2280,7 @@ def validate_file(file):
         print(f"Validation error: {e}")
         return None, f"Validation error: {e}"
 
-def upload_file(file):
-    _, error = validate_file(file)
-    if error:
-        return error
-    return "File uploaded successfully."
+
 
 def html_to_text(html):
     if not html:
@@ -1993,7 +2316,7 @@ def html_to_markdown(html):
     return markdown_text
 
 def standardize_date_format(date_input):
-    """Standardize date format across all emails"""
+    """Standardize date format to match Microsoft Outlook exactly: 'Day, Month DD, YYYY H:MM AM/PM'"""
     if not date_input or date_input == 'Unknown':
         return 'Unknown'
 
@@ -2003,21 +2326,31 @@ def standardize_date_format(date_input):
 
         # Handle datetime objects directly
         if isinstance(date_input, datetime):
-            return date_input.strftime('%A, %B %d, %Y %I:%M %p')
+            # Format exactly like Outlook: "Tuesday, June 3, 2025 6:26 PM"
+            # Always use Windows-compatible format and remove leading zeros manually
+            formatted = date_input.strftime('%A, %B %d, %Y %I:%M %p')
+            # Remove leading zeros manually for cross-platform compatibility
+            formatted = re.sub(r' 0(\d,)', r' \1', formatted)  # Remove leading zero from day
+            formatted = re.sub(r' 0(\d:\d{2} [AP]M)', r' \1', formatted)  # Remove leading zero from hour
+            return formatted
 
         # Convert to string if not already
         date_str = str(date_input).strip()
 
-        # Handle different date formats
+        # Enhanced date patterns to handle more formats
         date_patterns = [
-            # ISO format: 2025-06-03 18:25:59+08:00
+            # ISO format with timezone: 2025-06-03 18:25:59+08:00
             (r'(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})', '%Y-%m-%d %H:%M:%S'),
+            # ISO format with T: 2025-06-03T18:25:59
+            (r'(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})', '%Y-%m-%dT%H:%M:%S'),
             # US format: Tuesday, June 3, 2025 12:05 PM
             (r'(\w+),\s+(\w+)\s+(\d{1,2}),\s+(\d{4})\s+(\d{1,2}:\d{2})\s+(AM|PM)', '%A, %B %d, %Y %I:%M %p'),
             # Short format: June 3, 2025 12:05 PM
             (r'(\w+)\s+(\d{1,2}),\s+(\d{4})\s+(\d{1,2}:\d{2})\s+(AM|PM)', '%B %d, %Y %I:%M %p'),
             # Date only: May 30, 2025
             (r'(\w+)\s+(\d{1,2}),\s+(\d{4})', '%B %d, %Y'),
+            # RFC 2822 format: Mon, 03 Jun 2025 18:26:00 +0800
+            (r'(\w+),\s+(\d{1,2})\s+(\w+)\s+(\d{4})\s+(\d{2}:\d{2}:\d{2})', '%a, %d %b %Y %H:%M:%S'),
         ]
 
         # Try to parse with different patterns
@@ -2040,8 +2373,14 @@ def standardize_date_format(date_input):
                     # Parse the date
                     dt = datetime.strptime(matched_text, format_str)
 
-                    # Return in consistent format: "Day, Month DD, YYYY HH:MM AM/PM"
-                    return dt.strftime('%A, %B %d, %Y %I:%M %p')
+                    # Return in Outlook format: "Tuesday, June 3, 2025 6:26 PM"
+                    # Always use Windows-compatible format and remove leading zeros manually
+                    formatted = dt.strftime('%A, %B %d, %Y %I:%M %p')
+                    # Remove leading zeros manually for cross-platform compatibility
+                    formatted = re.sub(r' 0(\d,)', r' \1', formatted)  # Remove leading zero from day
+                    formatted = re.sub(r' 0(\d:\d{2} [AP]M)', r' \1', formatted)  # Remove leading zero from hour
+
+                    return formatted
                 except Exception as parse_error:
                     print(f"Parse error for '{matched_text}': {parse_error}")
                     continue
@@ -2053,303 +2392,170 @@ def standardize_date_format(date_input):
         print(f"Date formatting error: {e}")
         return str(date_input) if date_input else 'Unknown'
 
-def parse_email_thread(email_info):
-    """Parse email content to extract individual emails in a thread"""
-    body = email_info.get('body', '')
-    html_body = email_info.get('html_body', '')
-    to_recipients = email_info.get('to_recipients', [])
-    cc_recipients = email_info.get('cc_recipients', [])
 
-    emails = []
-
-    # Enhanced parsing to handle different email thread formats
-    # Look for patterns like "**From:** " or "From: " that indicate email headers
-    from_patterns = [
-        r'\*\*\s*From:\s*\*\*\s*(.+?)(?:\s*<br\s*/?>|\n)',  # **From:** pattern
-        r'From:\s*(.+?)(?:\s*<br\s*/?>|\n)',                # From: pattern
-        r'<strong>\s*From:\s*</strong>\s*(.+?)(?:\s*<br\s*/?>|\n)'  # <strong>From:</strong> pattern
-    ]
-
-    sent_patterns = [
-        r'\*\*\s*Sent:\s*\*\*\s*(.+?)(?:\s*<br\s*/?>|\n)',  # **Sent:** pattern
-        r'Sent:\s*(.+?)(?:\s*<br\s*/?>|\n)',                # Sent: pattern
-        r'<strong>\s*Sent:\s*</strong>\s*(.+?)(?:\s*<br\s*/?>|\n)'  # <strong>Sent:</strong> pattern
-    ]
-
-    # Add patterns for To: and Cc: fields
-    to_patterns = [
-        r'\*\*\s*To:\s*\*\*\s*(.+?)(?:\s*<br\s*/?>|\n)',    # **To:** pattern
-        r'To:\s*(.+?)(?:\s*<br\s*/?>|\n)',                  # To: pattern
-        r'<strong>\s*To:\s*</strong>\s*(.+?)(?:\s*<br\s*/?>|\n)'  # <strong>To:</strong> pattern
-    ]
-
-    cc_patterns = [
-        r'\*\*\s*Cc:\s*\*\*\s*(.+?)(?:\s*<br\s*/?>|\n)',    # **Cc:** pattern
-        r'Cc:\s*(.+?)(?:\s*<br\s*/?>|\n)',                  # Cc: pattern
-        r'<strong>\s*Cc:\s*</strong>\s*(.+?)(?:\s*<br\s*/?>|\n)'  # <strong>Cc:</strong> pattern
-    ]
-
-    # Try to find email separators in the body
-    email_separators = []
-
-    # Look for From: patterns that indicate start of new emails
-    for pattern in from_patterns:
-        matches = list(re.finditer(pattern, body, re.IGNORECASE | re.MULTILINE))
-        for match in matches:
-            email_separators.append((match.start(), match.group(1).strip()))
-
-    if email_separators:
-        # Sort separators by position
-        email_separators.sort(key=lambda x: x[0])
-
-        # First email is the main one (before first separator)
-        first_separator_pos = email_separators[0][0]
-        main_body = body[:first_separator_pos].strip()
-
-        emails.append({
-            'sender': email_info.get('sender', 'Unknown'),
-            'subject': email_info.get('subject', '(No Subject)'),
-            'date': standardize_date_format(email_info.get('date', 'Unknown')),
-            'body': main_body,
-            'html_body': email_info.get('html_body', ''),
-            'attachments': email_info.get('attachments', []),
-            'to_recipients': to_recipients,
-            'cc_recipients': cc_recipients,
-            'is_main': True
-        })
-
-        # Parse each subsequent email in the thread
-        for i, (sep_pos, sender) in enumerate(email_separators):
-            # Find the end position for this email (start of next email or end of body)
-            if i + 1 < len(email_separators):
-                end_pos = email_separators[i + 1][0]
-                email_content = body[sep_pos:end_pos].strip()
-            else:
-                email_content = body[sep_pos:].strip()
-
-            # Extract date from the email content
-            date = 'Unknown'
-            for pattern in sent_patterns:
-                date_match = re.search(pattern, email_content, re.IGNORECASE | re.MULTILINE)
-                if date_match:
-                    date = standardize_date_format(date_match.group(1).strip())
-                    break
-
-            # Extract To: recipients from the email content
-            email_to_recipients = []
-            for pattern in to_patterns:
-                to_match = re.search(pattern, email_content, re.IGNORECASE | re.MULTILINE)
-                if to_match:
-                    to_text = to_match.group(1).strip()
-                    # Parse recipients (handle multiple formats)
-                    if ';' in to_text:
-                        email_to_recipients = [r.strip() for r in to_text.split(';') if r.strip()]
-                    elif ',' in to_text:
-                        email_to_recipients = [r.strip() for r in to_text.split(',') if r.strip()]
-                    else:
-                        email_to_recipients = [to_text] if to_text else []
-                    break
-
-            # Extract Cc: recipients from the email content
-            email_cc_recipients = []
-            for pattern in cc_patterns:
-                cc_match = re.search(pattern, email_content, re.IGNORECASE | re.MULTILINE)
-                if cc_match:
-                    cc_text = cc_match.group(1).strip()
-                    # Parse recipients (handle multiple formats)
-                    if ';' in cc_text:
-                        email_cc_recipients = [r.strip() for r in cc_text.split(';') if r.strip()]
-                    elif ',' in cc_text:
-                        email_cc_recipients = [r.strip() for r in cc_text.split(',') if r.strip()]
-                    else:
-                        email_cc_recipients = [cc_text] if cc_text else []
-                    break
-
-            # Extract the actual email body (skip the header lines)
-            lines = email_content.split('\n')
-            body_start = 0
-
-            # Skip header lines to find actual content
-            for j, line in enumerate(lines):
-                if any(header in line.lower() for header in ['from:', 'sent:', 'to:', 'cc:', 'subject:']):
-                    continue
-                elif line.strip() and not any(header in line.lower() for header in ['from:', 'sent:', 'to:', 'cc:', 'subject:']):
-                    body_start = j
-                    break
-
-            email_body = '\n'.join(lines[body_start:]).strip()
-
-            # Clean up sender name (remove extra ** characters)
-            clean_sender = sender.replace('**', '').strip()
-
-            # Only add emails with meaningful content (not just "**" or empty)
-            if email_body and email_body != '**' and len(email_body) > 10:
-                emails.append({
-                    'sender': clean_sender,
-                    'subject': email_info.get('subject', '(No Subject)'),  # Use main subject for thread
-                    'date': date,
-                    'body': email_body,
-                    'html_body': '',  # Threaded emails typically don't have separate HTML
-                    'attachments': [],
-                    'to_recipients': email_to_recipients,
-                    'cc_recipients': email_cc_recipients,
-                    'is_main': False
-                })
-    else:
-        # Single email - include recipient information and HTML content
-        emails.append({
-            'sender': email_info.get('sender', 'Unknown'),
-            'subject': email_info.get('subject', '(No Subject)'),
-            'date': standardize_date_format(email_info.get('date', 'Unknown')),
-            'body': html_to_markdown(html_body) if html_body else body,
-            'html_body': email_info.get('html_body', ''),
-            'attachments': email_info.get('attachments', []),
-            'to_recipients': to_recipients,
-            'cc_recipients': cc_recipients,
-            'is_main': True
-        })
-
-    return emails
 
 def format_email_preview(email_info):
-    """Format email content as Outlook-style thread with proper dividers"""
-    emails = parse_email_thread(email_info)
-    
-    if not emails:
+    """Format email content directly as Outlook-style display without thread parsing"""
+    if not email_info:
         return "<div class='empty-state'>No email content to display</div>"
-    
-    html_parts = ['<div class="email-preview-container"><div class="email-thread">']
-    
-    for email in emails:
-        sender = email.get('sender', 'Unknown')
-        subject = email.get('subject', '(No Subject)')
-        date = email.get('date', 'Unknown')
-        body = email.get('body', '')
-        to_recipients = email.get('to_recipients', [])
-        cc_recipients = email.get('cc_recipients', [])
 
-        # Use HTML body if available for rich content rendering, otherwise format plain text
-        html_body = email.get('html_body', '')
-        if html_body:
-            try:
-                from bs4 import BeautifulSoup
-                # Parse and clean HTML content while preserving formatting
-                soup = BeautifulSoup(html_body, 'html.parser')
+    # Get email details directly from email_info
+    sender = email_info.get('sender', 'Unknown')
+    subject = email_info.get('subject', '(No Subject)')
+    date = standardize_date_format(email_info.get('date', 'Unknown'))
+    body = email_info.get('body', '')
+    to_recipients = email_info.get('to_recipients', [])
+    cc_recipients = email_info.get('cc_recipients', [])
+    html_body = email_info.get('html_body', '')
+    attachments = email_info.get('attachments', [])
 
-                # Remove script tags for security
-                for script in soup.find_all('script'):
-                    script.decompose()
+    # Process email body content with Outlook-compatible formatting
+    if html_body:
+        try:
+            from bs4 import BeautifulSoup
+            # Parse and clean HTML content while preserving formatting
+            soup = BeautifulSoup(html_body, 'html.parser')
 
-                # Handle embedded images with cid: references
-                attachments = email.get('attachments', [])
-                for img in soup.find_all('img'):
-                    src = img.get('src', '')
-                    if src.startswith('cid:'):
-                        content_id = src.replace('cid:', '')
-                        # Find matching attachment
-                        for attachment in attachments:
-                            if attachment.get('content_id') == content_id:
-                                # Convert to base64 data URL
-                                import base64
-                                file_ext = attachment.get('filename', '').split('.')[-1].lower()
-                                mime_type = {
-                                    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-                                    'png': 'image/png', 'gif': 'image/gif',
-                                    'bmp': 'image/bmp', 'svg': 'image/svg+xml'
-                                }.get(file_ext, 'image/jpeg')
+            # Remove script tags for security
+            for script in soup.find_all('script'):
+                script.decompose()
 
-                                base64_data = base64.b64encode(attachment.get('data', b'')).decode('utf-8')
-                                data_url = f"data:{mime_type};base64,{base64_data}"
-                                img['src'] = data_url
-                                break
+            # Apply Outlook-compatible styling to all paragraphs
+            for p in soup.find_all('p'):
+                p['style'] = 'margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;'
 
-                # Get the cleaned HTML content
-                body_html = str(soup)
+            # Apply Outlook-compatible styling to lists
+            for ul in soup.find_all('ul'):
+                ul['style'] = 'margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;'
 
-                # If the HTML is just a wrapper around plain text, extract and format it
-                if not soup.find_all(['img', 'table', 'div', 'span', 'strong', 'em', 'ul', 'ol']):
-                    body_text = soup.get_text()
-                    if body_text.strip():
-                        body_html = body_text.replace('\n', '<br>')
-                        body_html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', body_html)
+            for ol in soup.find_all('ol'):
+                ol['style'] = 'margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;'
 
-            except Exception as e:
-                print(f"Error processing HTML body: {e}")
-                # Fallback to plain text processing
-                body_html = body.replace('\n', '<br>') if body else '<em>No content</em>'
-                body_html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', body_html)
-        elif body:
-            try:
-                # Convert markdown to HTML, but first fix any **text** that should be bold
-                body_clean = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', body)
-                body_html = markdown.markdown(body_clean, extensions=['nl2br'])
-            except:
-                # Fallback: simple line break conversion and bold formatting
-                body_html = body.replace('\n', '<br>')
-                body_html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', body_html)
-        else:
-            body_html = '<em>No content</em>'
+            for li in soup.find_all('li'):
+                li['style'] = 'margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;'
 
-        # Format recipient lists for display with clickable mailto links
-        def format_recipients(recipients):
-            """Format recipient list for display with clickable mailto links"""
-            if not recipients:
-                return "(None)"
+            # Handle embedded images with cid: references
+            for img in soup.find_all('img'):
+                src = img.get('src', '')
+                if src.startswith('cid:'):
+                    content_id = src.replace('cid:', '')
+                    # Find matching attachment
+                    for attachment in attachments:
+                        if attachment.get('content_id') == content_id:
+                            # Convert to base64 data URL
+                            import base64
+                            file_ext = attachment.get('filename', '').split('.')[-1].lower()
+                            mime_type = {
+                                'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+                                'png': 'image/png', 'gif': 'image/gif',
+                                'bmp': 'image/bmp', 'svg': 'image/svg+xml'
+                            }.get(file_ext, 'image/jpeg')
 
-            formatted_recipients = []
-            for recipient in recipients:
-                # Extract email from "Name <email>" format or use as-is
-                email_match = re.search(r'<([^>]+)>', recipient)
-                if email_match:
-                    email = email_match.group(1)
-                    name = recipient.replace(f'<{email}>', '').strip().strip('"')
-                    formatted_recipients.append(f'<a href="mailto:{email}" style="color: #0078d4; text-decoration: none;">{name} &lt;{email}&gt;</a>')
-                else:
-                    # Assume it's just an email address
-                    formatted_recipients.append(f'<a href="mailto:{recipient}" style="color: #0078d4; text-decoration: none;">{recipient}</a>')
+                            base64_data = base64.b64encode(attachment.get('data', b'')).decode('utf-8')
+                            data_url = f"data:{mime_type};base64,{base64_data}"
+                            img['src'] = data_url
+                            break
 
-            if len(formatted_recipients) == 1:
-                return formatted_recipients[0]
-            elif len(formatted_recipients) <= 3:
-                return ", ".join(formatted_recipients)
+                # Ensure images are responsive
+                current_style = img.get('style', '')
+                if 'max-width' not in current_style:
+                    img['style'] = current_style + '; max-width: 100%; height: auto;'
+
+            # Get the cleaned HTML content
+            body_html = str(soup)
+
+        except Exception as e:
+            print(f"Error processing HTML body: {e}")
+            # Fallback to plain text processing with Outlook-compatible formatting
+            if body:
+                text_lines = body.split('\n')
+                formatted_lines = []
+                for line in text_lines:
+                    if line.strip():
+                        formatted_lines.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;">{line}</p>')
+                    else:
+                        formatted_lines.append('<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p>')
+                body_html = ''.join(formatted_lines)
             else:
-                # For more than 3 recipients, show first 2 and count
-                return f"{formatted_recipients[0]}, {formatted_recipients[1]}, and {len(formatted_recipients) - 2} more"
+                body_html = '<p style="margin: 0; padding: 0; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;"><em>No content</em></p>'
+    elif body:
+        # Convert plain text to HTML with Outlook-compatible formatting
+        text_lines = body.split('\n')
+        formatted_lines = []
+        for line in text_lines:
+            if line.strip():
+                # Convert **text** to <strong>text</strong>
+                line_formatted = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', line)
+                formatted_lines.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;">{line_formatted}</p>')
+            else:
+                formatted_lines.append('<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p>')
+        body_html = ''.join(formatted_lines)
+    else:
+        body_html = '<p style="margin: 0; padding: 0; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt;"><em>No content</em></p>'
 
-        to_display = format_recipients(to_recipients)
-        cc_display = format_recipients(cc_recipients)
+    # Format recipient lists for display with clickable mailto links
+    def format_recipients(recipients):
+        """Format recipient list for display with clickable mailto links"""
+        if not recipients:
+            return "(None)"
 
-        # Build header lines in standardized order: From, Sent, To, Cc, Subject
-        header_lines = [
-            f'<div class="email-header-line"><span class="email-header-label">From:</span><span class="email-header-value">{sender}</span></div>',
-            f'<div class="email-header-line"><span class="email-header-label">Sent:</span><span class="email-header-value">{date}</span></div>'
-        ]
+        formatted_recipients = []
+        for recipient in recipients:
+            # Extract email from "Name <email>" format or use as-is
+            email_match = re.search(r'<([^>]+)>', recipient)
+            if email_match:
+                email = email_match.group(1)
+                name = recipient.replace(f'<{email}>', '').strip().strip('"')
+                formatted_recipients.append(f'<a href="mailto:{email}" style="color: #0078d4; text-decoration: none;">{name} &lt;{email}&gt;</a>')
+            else:
+                # Assume it's just an email address
+                formatted_recipients.append(f'<a href="mailto:{recipient}" style="color: #0078d4; text-decoration: none;">{recipient}</a>')
 
-        # Add To: field if recipients exist
-        if to_recipients:
-            header_lines.append(f'<div class="email-header-line"><span class="email-header-label">To:</span><span class="email-header-value">{to_display}</span></div>')
+        if len(formatted_recipients) == 1:
+            return formatted_recipients[0]
+        elif len(formatted_recipients) <= 3:
+            return ", ".join(formatted_recipients)
+        else:
+            # For more than 3 recipients, show first 2 and count
+            return f"{formatted_recipients[0]}, {formatted_recipients[1]}, and {len(formatted_recipients) - 2} more"
 
-        # Add Cc: field if recipients exist
-        if cc_recipients:
-            header_lines.append(f'<div class="email-header-line"><span class="email-header-label">Cc:</span><span class="email-header-value">{cc_display}</span></div>')
+    to_display = format_recipients(to_recipients)
+    cc_display = format_recipients(cc_recipients)
 
-        # Add Subject last
-        header_lines.append(f'<div class="email-header-line"><span class="email-header-label">Subject:</span><span class="email-header-value">{subject}</span></div>')
+    # Build header lines in standardized order: From, Sent, To, Cc, Subject
+    header_lines = [
+        f'<div class="email-header-line"><span class="email-header-label">From:</span><span class="email-header-value">{sender}</span></div>',
+        f'<div class="email-header-line"><span class="email-header-label">Sent:</span><span class="email-header-value">{date}</span></div>'
+    ]
 
-        # Create email item with proper divider and enhanced header
-        html_parts.append(f'''
-        <div class="email-item">
-            <div class="email-header">
-                {"".join(header_lines)}
-            </div>
-            <div class="email-body">
-                {body_html}
+    # Add To: field if recipients exist
+    if to_recipients:
+        header_lines.append(f'<div class="email-header-line"><span class="email-header-label">To:</span><span class="email-header-value">{to_display}</span></div>')
+
+    # Add Cc: field if recipients exist
+    if cc_recipients:
+        header_lines.append(f'<div class="email-header-line"><span class="email-header-label">Cc:</span><span class="email-header-value">{cc_display}</span></div>')
+
+    # Add Subject last
+    header_lines.append(f'<div class="email-header-line"><span class="email-header-label">Subject:</span><span class="email-header-value">{subject}</span></div>')
+
+    # Create simplified email preview with Outlook-style formatting
+    email_preview = f'''
+    <div class="email-preview-container">
+        <div class="email-thread">
+            <div class="email-item">
+                <div class="email-header">
+                    {"".join(header_lines)}
+                </div>
+                <div class="email-body">
+                    {body_html}
+                </div>
             </div>
         </div>
-        ''')
-    
-    html_parts.append('</div></div>')
-    return ''.join(html_parts)
+    </div>
+    '''
+
+    return email_preview
 
 def extract_and_separate_think_content(text):
     """Extract <think> content and return both parts separately"""
@@ -2393,8 +2599,63 @@ def validate_and_restore_ai_instructions(ai_instructions):
 
     return ai_instructions.strip()
 
+def format_reply_content_simple(text):
+    """Format reply content with Outlook-compatible spacing using empty paragraphs instead of CSS margins"""
+    if not text:
+        return ""
+
+    # Clean the text
+    clean_text = text.strip()
+
+    # Remove any subject line patterns at the beginning
+    clean_text = re.sub(r'^Subject:\s*.*?\n\s*', '', clean_text, flags=re.IGNORECASE | re.MULTILINE)
+    clean_text = re.sub(r'^RE:\s*.*?\n\s*', '', clean_text, flags=re.IGNORECASE | re.MULTILINE)
+
+    # Convert markdown to HTML properly with enhanced formatting
+    try:
+        # Handle bold text and other markdown
+        html_content = markdown.markdown(clean_text, extensions=['nl2br'])
+        # Remove any subject line patterns that might be in HTML
+        html_content = re.sub(r'<p[^>]*>Subject:\s*.*?</p>', '', html_content, flags=re.IGNORECASE)
+        html_content = re.sub(r'<p[^>]*>RE:\s*.*?</p>', '', html_content, flags=re.IGNORECASE)
+
+        # Apply Outlook-compatible paragraph styling (no bottom margin, use empty paragraphs for spacing)
+        html_content = re.sub(r'<p>', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">', html_content)
+
+        # Insert empty paragraphs between content paragraphs for Outlook-compatible spacing
+        html_content = re.sub(r'</p>\s*<p', '</p><p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p><p', html_content)
+    except:
+        # Fallback: enhanced formatting with proper paragraph breaks using empty paragraphs
+        html_content = clean_text
+
+        # Split into paragraphs (double line breaks for proper Outlook-style spacing)
+        paragraphs = html_content.split('\n\n')
+        formatted_paragraphs = []
+
+        for i, para in enumerate(paragraphs):
+            if para.strip():
+                # Skip paragraphs that look like subject lines
+                if re.match(r'^\s*(Subject|RE):\s*', para.strip(), re.IGNORECASE):
+                    continue
+
+                # Convert single line breaks to <br> within paragraphs
+                para_formatted = para.replace('\n', '<br>')
+                # Convert **text** to <strong>text</strong>
+                para_formatted = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', para_formatted)
+                # Wrap in paragraph tags with Outlook-compatible styling (no bottom margin)
+                formatted_paragraphs.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">{para_formatted}</p>')
+
+                # Add empty paragraph for spacing between content paragraphs (except for the last one)
+                if i < len([p for p in paragraphs if p.strip()]) - 1:
+                    formatted_paragraphs.append('<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p>')
+
+        html_content = ''.join(formatted_paragraphs)
+
+    # Return content directly without wrapper div to avoid double spacing
+    return html_content
+
 def format_reply_content(text):
-    """Format reply content as clean HTML with proper spacing and paragraph breaks"""
+    """Format reply content with Outlook-compatible spacing using empty paragraphs instead of CSS margins"""
     if not text:
         return "<div class='empty-state'>No content to display</div>"
 
@@ -2413,17 +2674,20 @@ def format_reply_content(text):
         html_content = re.sub(r'<p[^>]*>Subject:\s*.*?</p>', '', html_content, flags=re.IGNORECASE)
         html_content = re.sub(r'<p[^>]*>RE:\s*.*?</p>', '', html_content, flags=re.IGNORECASE)
 
-        # Apply custom paragraph styling to markdown-generated paragraphs (single line break spacing for Outlook compatibility)
-        html_content = re.sub(r'<p>', '<p style="margin: 0 0 11pt 0; line-height: 1.15;">', html_content)
+        # Apply Outlook-compatible paragraph styling (no bottom margin, use empty paragraphs for spacing)
+        html_content = re.sub(r'<p>', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0;">', html_content)
+
+        # Insert empty paragraphs between content paragraphs for Outlook-compatible spacing
+        html_content = re.sub(r'</p>\s*<p', '</p><p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p><p', html_content)
     except:
-        # Fallback: enhanced formatting with proper paragraph breaks
+        # Fallback: enhanced formatting with proper paragraph breaks using empty paragraphs
         html_content = clean_text
 
         # Split into paragraphs (single line breaks for proper Outlook-style spacing)
         paragraphs = html_content.split('\n\n')
         formatted_paragraphs = []
 
-        for para in paragraphs:
+        for i, para in enumerate(paragraphs):
             if para.strip():
                 # Skip paragraphs that look like subject lines
                 if re.match(r'^\s*(Subject|RE):\s*', para.strip(), re.IGNORECASE):
@@ -2433,8 +2697,12 @@ def format_reply_content(text):
                 para_formatted = para.replace('\n', '<br>')
                 # Convert **text** to <strong>text</strong>
                 para_formatted = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', para_formatted)
-                # Wrap in paragraph tags with single line break spacing (11pt margin for Outlook compatibility)
-                formatted_paragraphs.append(f'<p style="margin: 0 0 11pt 0; line-height: 1.15;">{para_formatted}</p>')
+                # Wrap in paragraph tags with Outlook-compatible styling (no bottom margin)
+                formatted_paragraphs.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0;">{para_formatted}</p>')
+
+                # Add empty paragraph for spacing between content paragraphs (except for the last one)
+                if i < len([p for p in paragraphs if p.strip()]) - 1:
+                    formatted_paragraphs.append('<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p>')
 
         html_content = ''.join(formatted_paragraphs)
 
@@ -2534,7 +2802,7 @@ def format_draft_preview(reply_text, original_email_info, user_email=""):
         <div style="margin-bottom: 8px;">
             <strong style="color: #0078d4; font-size: 1.1em;">📧 Email Draft Preview</strong>
         </div>
-        <div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.15; background: white; border: 1px solid #d1d5db; border-radius: 4px; padding: 16px;">
+        <div style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; background: white; border: 1px solid #d1d5db; border-radius: 4px; padding: 16px;">
             <div style="margin-bottom: 12px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
                 <div style="margin: 2px 0; font-size: 11pt;">
                     <span style="font-weight: bold; color: #000; min-width: 60px; display: inline-block;">To:</span>
@@ -2549,7 +2817,7 @@ def format_draft_preview(reply_text, original_email_info, user_email=""):
                     <span style="color: #000;">{reply_subject}</span>
                 </div>
             </div>
-            <div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.15; color: #000;">
+            <div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
                 {threaded_html}
             </div>
         </div>
@@ -2593,7 +2861,7 @@ def create_threaded_email_content(reply_text, original_email_info):
 
         # Get original email details with complete content preservation
         original_sender = original_email_info.get('sender', 'Unknown')
-        original_date = original_email_info.get('date', 'Unknown')
+        original_date = standardize_date_format(original_email_info.get('date', 'Unknown'))
         original_subject = original_email_info.get('subject', '(No Subject)')
         original_body = original_email_info.get('body', '')
         original_html_body = original_email_info.get('html_body', '')
@@ -2615,9 +2883,9 @@ def create_threaded_email_content(reply_text, original_email_info):
             # Fallback to plain text with basic HTML formatting
             original_body_for_threading = original_body.replace('\n', '<br>')
 
-        # Format recipients for display
-        to_display = '; '.join(to_recipients) if to_recipients else ''
-        cc_display = '; '.join(cc_recipients) if cc_recipients else ''
+        # Format recipients for display (use comma separation like Outlook)
+        to_display = ', '.join(to_recipients) if to_recipients else ''
+        cc_display = ', '.join(cc_recipients) if cc_recipients else ''
 
         # Preserve HTML formatting while cleaning unwanted elements
         clean_reply_html = reply_text
@@ -2643,17 +2911,24 @@ def create_threaded_email_content(reply_text, original_email_info):
                     formatted_reply_html = str(content_div.decode_contents())
 
             # Ensure proper styling for email clients while preserving original formatting
-            # Add email-safe CSS for lists and formatting elements
-            formatted_reply_html = formatted_reply_html.replace('<ul>', '<ul style="margin: 16px 0; padding-left: 20px;">')
-            formatted_reply_html = formatted_reply_html.replace('<ol>', '<ol style="margin: 16px 0; padding-left: 20px;">')
-            formatted_reply_html = formatted_reply_html.replace('<li>', '<li style="margin: 4px 0;">')
+            # Add email-safe CSS for lists and formatting elements using Outlook-compatible spacing
+            formatted_reply_html = formatted_reply_html.replace('<ul>', '<ul style="margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;">')
+            formatted_reply_html = formatted_reply_html.replace('<ol>', '<ol style="margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;">')
+            formatted_reply_html = formatted_reply_html.replace('<li>', '<li style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt;">')
+
+            # Ensure all paragraphs have consistent Outlook-compatible styling (no bottom margin)
+            formatted_reply_html = re.sub(r'<p(?![^>]*style=)', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;"', formatted_reply_html)
+            formatted_reply_html = re.sub(r'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1\.0;"', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;"', formatted_reply_html)
+
+            # Insert empty paragraphs between content paragraphs for Outlook-compatible spacing
+            formatted_reply_html = re.sub(r'</p>\s*<p', '</p><p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p><p', formatted_reply_html)
 
         else:
-            # Plain text - convert to HTML while preserving line breaks and structure
+            # Plain text - convert to HTML while preserving line breaks and structure using Outlook-compatible spacing
             paragraphs = clean_reply_html.split('\n\n')
             formatted_paragraphs = []
 
-            for para in paragraphs:
+            for i, para in enumerate(paragraphs):
                 if para.strip():
                     # Convert single line breaks to <br> within paragraphs
                     para_formatted = para.strip().replace('\n', '<br>')
@@ -2668,45 +2943,53 @@ def create_threaded_email_content(reply_text, original_email_info):
                             if line.strip():
                                 # Remove bullet characters and create list item
                                 clean_line = re.sub(r'^[•\-\*]\s*', '', line.strip())
-                                list_items.append(f'<li style="margin: 4px 0;">{clean_line}</li>')
+                                list_items.append(f'<li style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt;">{clean_line}</li>')
                         if list_items:
-                            formatted_paragraphs.append(f'<ul style="margin: 0 0 11pt 0; padding-left: 20px;">{"".join(list_items)}</ul>')
+                            formatted_paragraphs.append(f'<ul style="margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;">{"".join(list_items)}</ul>')
                     else:
-                        # Regular paragraph with Microsoft Sans Serif for AI-generated content
-                        formatted_paragraphs.append(f'<p style="margin: 0 0 11pt 0; line-height: 1.15; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">{para_formatted}</p>')
+                        # Regular paragraph with Microsoft Sans Serif for AI-generated content (no bottom margin)
+                        formatted_paragraphs.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">{para_formatted}</p>')
+
+                    # Add empty paragraph for spacing between content paragraphs (except for the last one)
+                    if i < len([p for p in paragraphs if p.strip()]) - 1:
+                        formatted_paragraphs.append('<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p>')
 
             formatted_reply_html = ''.join(formatted_paragraphs)
 
-        # Create threaded content with Microsoft Sans Serif for AI reply (single line break spacing)
+        # Create threaded content with Microsoft Sans Serif for AI reply using Outlook-compatible spacing
         threaded_html = f"""
-<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.15; color: #000;">
+<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
 {formatted_reply_html}
 <div style="margin: 16px 0;">
-<hr style="border: none; border-top: 2px solid #e5e7eb; margin: 16px 0;">
+<hr style="border: none; border-top: 1px solid #E1E1E1; margin: 16px 0;">
 </div>
 
-<div style="margin: 0; padding: 0;">
-<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>From:</strong> {original_sender}</p>
-<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>Sent:</strong> {original_date}</p>"""
+<div style="margin: 0; padding: 0; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">
+<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>From:</strong> {original_sender}</p>
+<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Sent:</strong> {original_date}</p>"""
 
         if to_recipients:
-            threaded_html += f'<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>To:</strong> {to_display}</p>'
+            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>To:</strong> {to_display}</p>'
 
         if cc_recipients:
-            threaded_html += f'<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>Cc:</strong> {cc_display}</p>'
+            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Cc:</strong> {cc_display}</p>'
 
         # Add subject line to match Outlook format
-        threaded_html += f'<p style="margin: 4px 0; font-size: 11pt; color: #000;"><strong>Subject:</strong> {original_subject}</p>'
+        threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Subject:</strong> {original_subject}</p>'
 
-        # Add original email body content with minimal styling for authentic Outlook look
+        # Add blank line after Subject (matching Outlook format)
+        threaded_html += '<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;">&nbsp;</p>'
+
+        # Add original email body content with Calibri font for authentic Outlook look
         threaded_html += f"""
-<div style="margin-top: 8px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.15; color: #000;">
+<div style="margin-top: 0px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; color: #000000;">
 {original_body_for_threading}
 </div>
 </div>"""
 
-        # Create plain text version (Outlook style with single line breaks)
+        # Create plain text version (Outlook style with proper separator)
         threaded_plain = f"""{reply_plain_text}
+
 ________________________________
 From: {original_sender}
 Sent: {original_date}"""
@@ -2720,8 +3003,9 @@ Sent: {original_date}"""
         # Add subject line to match Outlook format
         threaded_plain += f"\nSubject: {original_subject}"
 
-        # Add original email body content (single line break for proper spacing)
+        # Add blank line after Subject (matching Outlook format) and original email body content
         threaded_plain += f"""
+
 {original_body}"""
 
         return threaded_html, threaded_plain
@@ -2809,17 +3093,24 @@ Content-Type: text/html; charset=utf-8
         body {{
             font-family: 'Microsoft Sans Serif', sans-serif;
             font-size: 11pt;
-            line-height: 1.15;
+            line-height: 1.0;
             color: #000000;
             margin: 0;
             padding: 0;
         }}
         a {{ color: #0563C1; text-decoration: underline; }}
-        p {{ margin: 0 0 11pt 0; }}
+        p {{ margin: 0; padding: 0; margin-bottom: 0pt; }}
         .original-email {{
             margin-top: 16px;
-            border-top: 2px solid #e5e7eb;
+            border-top: 1px solid #E1E1E1;
             padding-top: 8px;
+            font-family: Calibri, Arial, sans-serif;
+        }}
+        .quoted-header {{
+            font-family: Calibri, Arial, sans-serif;
+            font-size: 11pt;
+            color: #000000;
+            line-height: 1.0;
         }}
     </style>
 </head>
@@ -2899,9 +3190,85 @@ def process_msg_file(file):
                 return None, f"Unsupported file type for processing: {type(file)} {file}"
         print(f"temp_path: {temp_path}")
         msg = extract_msg.Message(temp_path)
-        sender = msg.sender or "Unknown"
+
+        # Extract sender with proper name and email formatting
+        raw_sender = msg.sender or "Unknown"
+
+        # Try multiple ways to get sender email address
+        sender_email = None
+
+        # Method 1: Try senderEmailAddress property
+        sender_email = getattr(msg, 'senderEmailAddress', None)
+
+        # Method 2: Try senderEmailAddress with different casing
+        if not sender_email:
+            sender_email = getattr(msg, 'senderemailaddress', None)
+
+        # Method 3: Try to extract from sender name if it contains email
+        if not sender_email and raw_sender and '<' in raw_sender and '>' in raw_sender:
+            email_match = re.search(r'<([^>]+)>', raw_sender)
+            if email_match:
+                sender_email = email_match.group(1)
+
+        # Method 4: Try to get from message properties
+        if not sender_email:
+            try:
+                # Try different property names that might contain sender email
+                for prop_name in ['senderEmailAddress', 'senderEmail', 'fromEmail', 'from']:
+                    prop_value = getattr(msg, prop_name, None)
+                    if prop_value and '@' in str(prop_value):
+                        sender_email = str(prop_value)
+                        break
+            except:
+                pass
+
+        # Method 5: Look in the original email body for sender email patterns
+        if not sender_email and hasattr(msg, 'body') and msg.body:
+            # Look for email patterns in the body that might be the sender's email
+            email_patterns = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', msg.body)
+            if email_patterns:
+                # Use the first email found (often the sender's email in signatures)
+                sender_email = email_patterns[0]
+
+        print(f"Debug: raw_sender='{raw_sender}', sender_email='{sender_email}'")
+
+        # Clean up sender formatting - ensure proper "Name <email>" format
+        if raw_sender != "Unknown":
+            # Remove quotes around the name part if present
+            if raw_sender.startswith('"') and '"' in raw_sender[1:]:
+                # Extract name from quotes and email if present
+                quote_end = raw_sender.find('"', 1)
+                name_part = raw_sender[1:quote_end]
+                email_part = raw_sender[quote_end+1:].strip()
+                if email_part.startswith(' <') and email_part.endswith('>'):
+                    sender = f"{name_part} {email_part}"
+                else:
+                    # Try to get email separately and format properly
+                    if sender_email:
+                        sender = f"{name_part} <{sender_email}>"
+                    else:
+                        sender = name_part
+            elif '<' not in raw_sender:
+                # Name only - try to get sender email separately and format properly
+                if sender_email:
+                    sender = f"{raw_sender} <{sender_email}>"
+                else:
+                    # If no email available, keep just the name (this shouldn't happen in normal cases)
+                    sender = raw_sender
+            else:
+                # Already contains < and > - use as is
+                sender = raw_sender
+        else:
+            # Unknown sender - try to get email if available
+            if sender_email:
+                sender = f"Unknown <{sender_email}>"
+            else:
+                sender = raw_sender
+
         subject = msg.subject or "(No Subject)"
-        date = msg.date or "Unknown"
+        # Apply standardize_date_format to ensure consistent Outlook-style formatting
+        raw_date = msg.date or "Unknown"
+        date = standardize_date_format(raw_date)
         body = msg.body or ""
         html_body = getattr(msg, 'htmlBody', None)
 
@@ -2937,14 +3304,20 @@ def process_msg_file(file):
         if not to_recipients and hasattr(msg, 'to') and msg.to:
             to_str = str(msg.to).strip()
             if to_str:
+                # Clean up and ensure proper formatting
+                to_str = to_str.strip('"').strip()  # Remove quotes if present
                 to_recipients = [to_str]
 
         if not cc_recipients and hasattr(msg, 'cc') and msg.cc:
             cc_str = str(msg.cc).strip()
             if cc_str:
                 # Parse Cc string - split by semicolon and clean up
-                cc_parts = [part.strip().strip('<>') for part in cc_str.split(';') if part.strip()]
-                cc_recipients = [part for part in cc_parts if part]
+                cc_parts = []
+                for part in cc_str.split(';'):
+                    part = part.strip().strip('"').strip()  # Remove quotes and whitespace
+                    if part:
+                        cc_parts.append(part)
+                cc_recipients = cc_parts
 
         # Preserve complete HTML content including images and complex structures
         preserved_html_body = html_body
@@ -3021,24 +3394,8 @@ def process_msg_file(file):
             pass
         return None, f"Failed to process .msg file: {e}\n{tb}"
 
-with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") as demo:
-    # Create banner HTML with embedded base64 icon (temporarily hidden)
-    banner_html = f"""
-    <div class="app-header" style="display: none;">
-        <div class="header-content">
-            {f'<img src="{sara_icon_data_url}" alt="SARA Logo" class="sara-icon">' if sara_icon_data_url else ''}
-            <div class="header-text">
-                <h1 class="main-title">SARA Compose</h1>
-                <p class="subtitle">A prototype by Max Kwong</p>
-            </div>
-        </div>
-    </div>
-    """
-
-    # Banner temporarily hidden as requested
-    # gr.HTML(banner_html)
-
-    # Dynamic Status Instructions Panel with 3-Stage Workflow
+def create_status_section():
+    """Create the workflow status banner section"""
     def get_workflow_banner_html(active_stage=1):
         """Generate the 3-stage workflow banner HTML"""
         return f"""
@@ -3085,6 +3442,268 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
         elem_id="status-instructions"
     )
 
+    return status_instructions, get_workflow_banner_html
+
+def create_left_column():
+    """Create the left column components for email preview, thinking process, and draft response sections"""
+    # File Upload Accordion - Open by default
+    with gr.Accordion("📧 Upload Email File", open=True, elem_classes=["upload-accordion"]) as upload_accordion:
+        file_input = gr.File(
+            label="Select .msg email file or drag & drop here",
+            file_types=[".msg"],
+            elem_classes=["integrated-file-upload"]
+        )
+
+    # SARA Thinking Process Accordion - Moved between Upload and Draft Response
+    with gr.Accordion("💭 SARA Thinking Process", open=False, visible=False, elem_classes=["thinking-accordion", "container-hover-scale"]) as think_accordion:
+        think_output = gr.Markdown(value="")
+
+    # Draft Preview Accordion - Closed by default, opens during generation
+    with gr.Accordion("📝 SARA Draft Response", open=False, visible=False, elem_classes=["draft-accordion", "container-hover-scale"]) as draft_accordion:
+        draft_preview = gr.HTML(
+            value="""
+            <div class='draft-placeholder'>
+                <div class='placeholder-content'>
+                    <div class='placeholder-icon'>✍️</div>
+                    <h3>SARA Draft Will Appear Here</h3>
+                    <p>Upload an email and generate a response to see your SARA-composed draft</p>
+                </div>
+            </div>
+            """,
+            elem_classes=["draft-display-area"]
+        )
+
+        # Custom download button component - appears when email is generated
+        download_button = gr.DownloadButton(
+            label="📥 Download Draft Email",
+            visible=False,
+            variant="primary",
+            size="lg",
+            elem_classes=["custom-download-button", "draft-download-button", "btn-hover-scale", "btn-press-animation"]
+        )
+
+    # Original Email Accordion - Hidden by default, becomes visible after email upload
+    with gr.Accordion("📧 Original Email", open=False, visible=False, elem_classes=["original-accordion", "container-hover-scale"]) as original_accordion:
+        original_email_display = gr.HTML(
+            value="""
+            <div class='email-placeholder'>
+                <div class='placeholder-content'>
+                    <div class='placeholder-icon'>📧</div>
+                    <h3>Upload Email File Above</h3>
+                    <p>Select your .msg email file to view the original email content</p>
+                </div>
+            </div>
+            """,
+            elem_classes=["original-email-display-area"]
+        )
+
+    return {
+        'file_input': file_input,
+        'upload_accordion': upload_accordion,
+        'think_accordion': think_accordion,
+        'think_output': think_output,
+        'draft_accordion': draft_accordion,
+        'draft_preview': draft_preview,
+        'download_button': download_button,
+        'original_accordion': original_accordion,
+        'original_email_display': original_email_display
+    }
+
+def create_right_column():
+    """Create the right column components for controls, preferences, and development settings"""
+    # Top Section - Input Controls with Key Messages Accordion (Hidden by default, entire container)
+    with gr.Accordion("📝 Key Messages", open=False, visible=False, elem_classes=["key-messages-accordion", "container-hover-scale"]) as key_messages_accordion:
+        key_messages = gr.Textbox(
+            label="",
+            placeholder="Enter the key messages you want to include in your reply...\n\nExample:\n• Thank them for their inquiry\n• Confirm the meeting time\n• Provide additional resources",
+            lines=6,
+            max_lines=12,
+            show_label=False
+        )
+
+        # Generate button inside accordion - closer to input
+        generate_btn = gr.Button(
+            "🚀 Generate Reply",
+            interactive=True,
+            size="lg",
+            variant="primary",
+            elem_classes=["action-button", "generate-button-inline", "btn-hover-scale", "btn-press-animation"]
+        )
+
+    # Personal Preferences Section - New section above Development Settings
+    with gr.Accordion("👤 Personal Preferences", open=False, elem_classes=["personal-preferences", "container-hover-scale"], elem_id="personal-preferences-accordion"):
+        with gr.Group():
+            gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>User Identity</h4>")
+            user_name = gr.Textbox(
+                label="Your Name",
+                placeholder="Enter your full name...",
+                value="Max Kwong",
+                interactive=True,
+                elem_id="user-name-input",
+                elem_classes=["preference-input"]
+            )
+            user_email = gr.Textbox(
+                label="Your Email Address",
+                placeholder="Enter your email address...",
+                value="mwmkwong@hkma.gov.hk",
+                interactive=True,
+                elem_id="user-email-input",
+                elem_classes=["preference-input"]
+            )
+
+        with gr.Group():
+            gr.HTML("<h4 style='margin: 16px 0 12px 0; color: #64748b; font-size: 0.9rem;'>AI Instructions</h4>")
+
+            ai_instructions = gr.Textbox(
+                label="AI Instructions",
+                value=DEFAULT_AI_INSTRUCTIONS,
+                placeholder="Enter the complete instructions that will be sent to the AI model...",
+                lines=12,
+                max_lines=20,
+                interactive=True,  # Always editable
+                info="These are the exact instructions sent to the AI model. You have complete control over how the AI behaves. Only your identity context is added automatically.",
+                elem_id="ai-instructions-textarea",
+                elem_classes=["preference-textarea"]
+            )
+
+            # Restore Default Instructions button
+            restore_default_btn = gr.Button(
+                "🔄 Restore Default Instructions",
+                elem_classes=["action-button", "btn-hover-scale", "btn-press-animation"],
+                size="sm",
+                variant="primary"
+            )
+
+            # Hidden HTML component for visual feedback
+            restore_feedback = gr.HTML(visible=False)
+
+
+
+    # Disclaimer Section
+    with gr.Accordion("⚠️ Disclaimer", open=False, elem_classes=["disclaimer", "container-hover-scale"]):
+        gr.HTML("""
+        <div style="padding: 16px;">
+            <p style="margin: 0; color: #6b7280; line-height: 1.6; font-size: 0.85rem;">
+                Please be advised that all responses generated by SARA are provided in good faith and designed solely for the purpose of offering general information. While we strive for accuracy, SARA does not guarantee or warrant the completeness, reliability, or precision of the information provided. It is strongly recommended that users independently verify the information generated by SARA before utilizing it in any further capacity. Any actions or decisions made based on SARA's responses are undertaken entirely at the user's own risk.
+            </p>
+        </div>
+        """)
+
+    # Support & Feedback Section
+    with gr.Accordion("📞 Support & Feedback", open=False, elem_classes=["support-feedback", "container-hover-scale"]):
+        gr.HTML("""
+        <div style="padding: 16px;">
+            <p style="margin-bottom: 16px; color: #374151; line-height: 1.6;">
+                If you have any comments or need assistance regarding the tool, please don't hesitate to contact us:
+            </p>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+                <thead>
+                    <tr style="background-color: #f8fafc;">
+                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Name</th>
+                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Post</th>
+                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Extension</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">Max Kwong</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">SM(RD)</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">1673</td>
+                    </tr>
+                    <tr style="background-color: #f9fafb;">
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">Oscar So</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">M(RD)1</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">0858</td>
+                    </tr>
+                    <tr>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">Maggie Poon</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">AM(RD)1</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">0746</td>
+                    </tr>
+                    <tr style="background-color: #f9fafb;">
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">Cynwell Lau</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">AM(RD)3</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">0460</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        """)
+
+    # Changelog Section
+    with gr.Accordion("📌 Changelog", open=False, elem_classes=["changelog", "container-hover-scale"]):
+        gr.HTML("""
+        <div style="padding: 16px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background-color: #f8fafc;">
+                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Date</th>
+                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Version</th>
+                        <th style="border: 1px solid #e5e7eb; padding: 12px; text-align: left; font-weight: 600; color: #374151;">Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">07-07-2025</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">1.0</td>
+                        <td style="border: 1px solid #e5e7eb; padding: 12px; color: #374151;">• Initial release</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        """)
+
+    # Bottom Section - Development Settings (moved to bottom for better UX hierarchy)
+    with gr.Accordion("⚙️ Development Settings", open=False, elem_classes=["dev-settings", "container-hover-scale"]):
+        with gr.Group():
+            gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>AI Backend Configuration</h4>")
+
+            # Backend selection
+            backend_selector = gr.Dropdown(
+                label="AI Backend",
+                choices=["poe", "openrouter"],
+                value="poe",  # Default to POE
+                interactive=True,
+                info="Select the AI backend provider"
+            )
+
+            # Model selection - dynamically updated based on backend
+            model_selector = gr.Dropdown(
+                label="AI Model",
+                choices=POE_MODELS,
+                value="GPT-4o",  # Default to GPT-4o
+                interactive=True,
+                info="Select the AI model for email generation"
+            )
+
+            email_token_limit = gr.Number(
+                label="Email Content Limit (tokens)",
+                value=2000,
+                minimum=100,
+                maximum=32000,
+                step=100,
+                interactive=True,
+                info="Maximum tokens for email content sent to AI (longer emails will be truncated)"
+            )
+
+    return {
+        'key_messages_accordion': key_messages_accordion,
+        'key_messages': key_messages,
+        'generate_btn': generate_btn,
+        'user_name': user_name,
+        'user_email': user_email,
+        'ai_instructions': ai_instructions,
+        'restore_default_btn': restore_default_btn,
+        'restore_feedback': restore_feedback,
+        'backend_selector': backend_selector,
+        'model_selector': model_selector,
+        'email_token_limit': email_token_limit
+    }
+
+with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") as demo:
+    # Create status section components
+    status_instructions, get_workflow_banner_html = create_status_section()
+
     # Simplified localStorage persistence using Gradio BrowserState
     # This is more reliable than complex JavaScript
     preferences_state = gr.BrowserState({
@@ -3102,157 +3721,33 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
     with gr.Row(elem_classes=["main-layout-row"]):
         # Left column - Redesigned with collapsible accordions for progressive disclosure
         with gr.Column(scale=3, elem_classes=["email-preview-column"]):
-            # File Upload Accordion - Open by default
-            with gr.Accordion("📧 Upload Email File", open=True, elem_classes=["upload-accordion"]) as upload_accordion:
-                file_input = gr.File(
-                    label="Select .msg email file or drag & drop here",
-                    file_types=[".msg"],
-                    elem_classes=["integrated-file-upload"]
-                )
-
-            # SARA Thinking Process Accordion - Moved between Upload and Draft Response
-            with gr.Accordion("💭 SARA Thinking Process", open=False, visible=False, elem_classes=["thinking-accordion"]) as think_accordion:
-                think_output = gr.Markdown(value="")
-
-            # Draft Preview Accordion - Closed by default, opens during generation
-            with gr.Accordion("📝 SARA Draft Response", open=False, visible=False, elem_classes=["draft-accordion"]) as draft_accordion:
-                draft_preview = gr.HTML(
-                    value="""
-                    <div class='draft-placeholder'>
-                        <div class='placeholder-content'>
-                            <div class='placeholder-icon'>✍️</div>
-                            <h3>SARA Draft Will Appear Here</h3>
-                            <p>Upload an email and generate a response to see your SARA-composed draft</p>
-                        </div>
-                    </div>
-                    """,
-                    elem_classes=["draft-display-area"]
-                )
-
-            # Original Email Accordion - Hidden by default, becomes visible after email upload
-            with gr.Accordion("📧 Original Email", open=False, visible=False, elem_classes=["original-accordion"]) as original_accordion:
-                original_email_display = gr.HTML(
-                    value="""
-                    <div class='email-placeholder'>
-                        <div class='placeholder-content'>
-                            <div class='placeholder-icon'>📧</div>
-                            <h3>Upload Email File Above</h3>
-                            <p>Select your .msg email file to view the original email content</p>
-                        </div>
-                    </div>
-                    """,
-                    elem_classes=["original-email-display-area"]
-                )
+            left_components = create_left_column()
+            file_input = left_components['file_input']
+            upload_accordion = left_components['upload_accordion']
+            think_accordion = left_components['think_accordion']
+            think_output = left_components['think_output']
+            draft_accordion = left_components['draft_accordion']
+            draft_preview = left_components['draft_preview']
+            download_button = left_components['download_button']
+            original_accordion = left_components['original_accordion']
+            original_email_display = left_components['original_email_display']
 
         # Right column - All controls and output (optimized workflow)
         with gr.Column(scale=2, elem_classes=["rhs-controls-column"]):
-            # Top Section - Input Controls with Key Messages Accordion (Hidden by default, entire container)
-            with gr.Group(elem_classes=["card"], visible=False) as key_messages_group:
-                # Key Messages Accordion - Hidden by default, becomes visible after email upload
-                with gr.Accordion("📝 Key Messages", open=False, elem_classes=["key-messages-accordion"]) as key_messages_accordion:
-                    key_messages = gr.Textbox(
-                        label="Enter your key messages",
-                        placeholder="Enter the key messages you want to include in your reply...\n\nExample:\n• Thank them for their inquiry\n• Confirm the meeting time\n• Provide additional resources",
-                        lines=6,
-                        max_lines=12
-                    )
-
-            # Generate button outside accordion - Hidden by default, becomes visible after email upload
-            with gr.Group(elem_classes=["generate-button-section"], visible=False) as generate_button_group:
-                generate_btn = gr.Button(
-                    "🚀 Generate Reply",
-                    interactive=True,
-                    size="lg",
-                    variant="primary",
-                    elem_classes=["action-button"]
-                )
+            right_components = create_right_column()
+            key_messages_accordion = right_components['key_messages_accordion']
+            key_messages = right_components['key_messages']
+            generate_btn = right_components['generate_btn']
+            user_name = right_components['user_name']
+            user_email = right_components['user_email']
+            ai_instructions = right_components['ai_instructions']
+            restore_default_btn = right_components['restore_default_btn']
+            restore_feedback = right_components['restore_feedback']
+            backend_selector = right_components['backend_selector']
+            model_selector = right_components['model_selector']
+            email_token_limit = right_components['email_token_limit']
 
 
-
-            # SARA Processing Section - Removed (thinking process moved to left column)
-
-            # Actions Section - Download only
-            with gr.Group(elem_classes=["actions-section"]):
-                # Automatic download file component - appears when email is generated
-                download_file = gr.File(
-                    label="📧 Download Draft Email",
-                    visible=False,
-                    interactive=False,
-                    elem_classes=["download-file-section"]
-                )
-
-            # Personal Preferences Section - New section above Development Settings
-            with gr.Accordion("👤 Personal Preferences", open=False, elem_classes=["personal-preferences"], elem_id="personal-preferences-accordion"):
-                with gr.Group():
-                    gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>User Identity</h4>")
-                    user_name = gr.Textbox(
-                        label="Your Name",
-                        placeholder="Enter your full name...",
-                        value="Max Kwong",
-                        interactive=True,
-                        elem_id="user-name-input",
-                        elem_classes=["preference-input"]
-                    )
-                    user_email = gr.Textbox(
-                        label="Your Email Address",
-                        placeholder="Enter your email address...",
-                        value="mwmkwong@hkma.gov.hk",
-                        interactive=True,
-                        elem_id="user-email-input",
-                        elem_classes=["preference-input"]
-                    )
-
-
-
-                with gr.Group():
-                    gr.HTML("<h4 style='margin: 16px 0 12px 0; color: #64748b; font-size: 0.9rem;'>AI Instructions</h4>")
-
-                    ai_instructions = gr.Textbox(
-                        label="AI Instructions",
-                        value=DEFAULT_AI_INSTRUCTIONS,
-                        placeholder="Enter the complete instructions that will be sent to the AI model...",
-                        lines=12,
-                        max_lines=20,
-                        interactive=True,  # Always editable
-                        info="These are the exact instructions sent to the AI model. You have complete control over how the AI behaves. Only your identity context is added automatically.",
-                        elem_id="ai-instructions-textarea",
-                        elem_classes=["preference-textarea"]
-                    )
-
-                    # Restore Default Instructions button
-                    restore_default_btn = gr.Button(
-                        "🔄 Restore Default Instructions",
-                        elem_classes=["action-button"],
-                        size="sm",
-                        variant="primary"
-                    )
-
-                    # Hidden HTML component for visual feedback
-                    restore_feedback = gr.HTML(visible=False)
-
-            # Bottom Section - Development Settings (moved to bottom for better UX hierarchy)
-            with gr.Accordion("⚙️ Development Settings", open=False, elem_classes=["dev-settings"]):
-                with gr.Group():
-                    gr.HTML("<h4 style='margin: 0 0 12px 0; color: #64748b; font-size: 0.9rem;'>AI Model Configuration</h4>")
-
-                    # Model selection - POE only for cloud deployment
-                    model_selector = gr.Dropdown(
-                        label="AI Model",
-                        choices=POE_MODELS,
-                        value="GPT-4o",  # Default to GPT-4o
-                        interactive=True,
-                        info="Select the AI model for email generation (powered by POE API)"
-                    )
-
-                    email_token_limit = gr.Number(
-                        label="Email Content Limit (tokens)",
-                        value=2000,
-                        minimum=100,
-                        maximum=32000,
-                        step=100,
-                        interactive=True,
-                        info="Maximum tokens for email content sent to AI (longer emails will be truncated)"
-                    )
 
 
 
@@ -3260,6 +3755,8 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
     current_reply = gr.State("")
     current_think = gr.State("")
     current_email_info = gr.State({})
+
+
 
 
 
@@ -3298,6 +3795,61 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
         prefs["ai_instructions"] = instructions
         return prefs
 
+
+
+    def on_backend_change(backend_type):
+        """Handle backend selection change and update model choices"""
+        try:
+            # Update the backend manager
+            backend_manager.set_backend(backend_type)
+
+            # Get available models for the selected backend
+            available_models = backend_manager.get_available_models()
+
+            # Set default model based on backend
+            if backend_type == "openrouter":
+                default_model = "deepseek/deepseek-r1-distill-qwen-32b:free"
+            else:  # poe
+                default_model = "GPT-4o"
+
+            # Return updated dropdown
+            return gr.update(
+                choices=available_models,
+                value=default_model,
+                info=f"Select the AI model for email generation (powered by {backend_type.upper()} API)"
+            )
+        except Exception as e:
+            print(f"Error changing backend: {e}")
+            # Fallback to POE
+            return gr.update(
+                choices=POE_MODELS,
+                value="GPT-4o",
+                info="Select the AI model for email generation (powered by POE API)"
+            )
+
+    def validate_backend_model_compatibility(backend_type, model):
+        """Validate that the selected model is compatible with the backend"""
+        if backend_type == "poe":
+            return model in POE_MODELS
+        elif backend_type == "openrouter":
+            return model in OPENROUTER_MODELS
+        return False
+
+    def get_backend_health_info():
+        """Get detailed backend health information for UI display"""
+        status = backend_manager.get_backend_status()
+
+        health_info = []
+        for backend_name, backend_info in status.items():
+            if backend_name == "current":
+                continue
+
+            status_icon = "✅" if backend_info['healthy'] else "❌"
+            model_count = len(backend_info['models'])
+            health_info.append(f"{backend_name.upper()}: {status_icon} ({model_count} models)")
+
+        return " | ".join(health_info)
+
     def load_preferences_on_startup(prefs_state):
         """Load saved preferences on application startup"""
         prefs = prefs_state
@@ -3307,30 +3859,7 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
             gr.update(value=prefs.get("ai_instructions", DEFAULT_AI_INSTRUCTIONS))
         ]
 
-    # Add a component to trigger preference loading on page load - temporarily disabled for debugging
-    # preference_loader = gr.HTML(
-    #     value="""
-    #     <script>
-    #     // Initialize localStorage persistence for AI instructions
-    #     setTimeout(() => {
-    #         console.log('🔄 Initializing AI instruction persistence');
-    #
-    #         // Load saved custom instructions
-    #         const savedInstructions = loadCustomInstructions();
-    #         if (savedInstructions) {
-    #             const textarea = document.querySelector('#ai-instructions-textarea textarea');
-    #             if (textarea) {
-    #                 textarea.value = savedInstructions;
-    #                 // Trigger change event to update Gradio state
-    #                 textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    #                 console.log('Loaded saved custom instructions');
-    #             }
-    #         }
-    #     }, 1000);
-    #     </script>
-    #     """,
-    #     visible=False
-    # )
+
 
     def extract_and_display_email(file):
         if not file:
@@ -3351,9 +3880,7 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                 """,
                 gr.update(open=True),   # Keep upload accordion open
                 gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
-                gr.update(open=False, visible=False),  # Keep key messages accordion closed and hidden
-                gr.update(visible=False),  # Hide entire key messages group container when no file
-                gr.update(visible=False),  # Hide generate button group when no file
+                gr.update(open=False, visible=False),  # Hide key messages accordion when no file
                 {},
                 initial_status_html     # Reset status instructions
             )
@@ -3377,9 +3904,7 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
                 """,
                 gr.update(open=True),   # Keep upload accordion open for retry
                 gr.update(open=False, visible=False),  # Keep original accordion closed and hidden
-                gr.update(open=False, visible=False),  # Keep key messages accordion closed and hidden
-                gr.update(visible=False),  # Hide entire key messages group container on error
-                gr.update(visible=False),  # Hide generate button group on error
+                gr.update(open=False, visible=False),  # Hide key messages accordion on error
                 {},
                 error_status_html       # Show error status
             )
@@ -3394,10 +3919,8 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
             preview_html,               # Original email display
             gr.update(open=False, visible=False),  # Hide upload accordion after successful upload
             gr.update(open=True, visible=True),    # Make original email accordion visible and open to show content
-            gr.update(open=True, visible=True),    # Make key messages accordion visible and auto-expand
-            gr.update(visible=True),    # Make entire key messages group container visible after successful upload
-            gr.update(visible=True),    # Make generate button group visible after successful upload
-            info,
+            gr.update(open=True, visible=True),    # Make key messages accordion visible and open after successful upload
+            info,                       # Current email info state
             success_status_html         # Show success status
         )
 
@@ -3417,6 +3940,7 @@ with gr.Blocks(css=custom_css, title="SARA Compose - A prototype by Max Kwong") 
 
             if file_path and os.path.exists(file_path):
                 print(f"Auto-export successful: {file_path}")
+                # For DownloadButton, we need to return the file path as the value
                 return gr.update(visible=True, value=file_path)
             else:
                 print("Auto-export failed: No file created")
@@ -3508,30 +4032,38 @@ Key Messages to Include:
                     gr.update(visible=False),  # Hide thinking accordion
                     gr.update(open=False, visible=False),  # Hide and close draft accordion
                     gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),   # Close and hide key messages accordion
-                    gr.update(visible=False),  # Hide entire key messages group container
-                    gr.update(visible=False),  # Hide generate button group
+                    gr.update(open=False, visible=False),  # Hide key messages accordion
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
                     "",  # Clear current_think state
-                    no_file_status_html  # Show no file status
+                    no_file_status_html,  # Show no file status
+                    gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button
                 )
                 return
-            # Check if POE API is healthy
-            current_backend = backend_manager.get_current_backend()
-            if not current_backend.is_healthy():
-                # API unavailable - stay on Stage 2
+            # Check if any backend is healthy (with automatic fallback)
+            if not backend_manager.is_any_backend_healthy():
+                # No APIs available - stay on Stage 2
                 api_unavailable_status_html = get_workflow_banner_html(2)
+
+                # Get backend status for detailed error message
+                backend_status = backend_manager.get_backend_status()
+                poe_status = "✅ Healthy" if backend_status['poe']['healthy'] else "❌ Unavailable"
+                openrouter_status = "✅ Healthy" if backend_status['openrouter']['healthy'] else "❌ Unavailable"
 
                 yield (
                     gr.update(visible=True),   # Keep file input visible for retry
-                    """
+                    f"""
                     <div class='draft-placeholder'>
                         <div class='placeholder-content'>
                             <div class='placeholder-icon'>❌</div>
-                            <h3>API Unavailable</h3>
-                            <p>POE API service is not healthy</p>
+                            <h3>All AI Backends Unavailable</h3>
+                            <p><strong>Backend Status:</strong></p>
+                            <ul style='text-align: left; margin: 10px 0;'>
+                                <li>POE API: {poe_status}</li>
+                                <li>OpenRouter API: {openrouter_status}</li>
+                            </ul>
+                            <p>Please check your API keys and try again.</p>
                         </div>
                     </div>
                     """,
@@ -3539,14 +4071,13 @@ Key Messages to Include:
                     gr.update(visible=False),  # Hide thinking accordion
                     gr.update(open=False, visible=False),  # Hide and close draft accordion
                     gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),   # Close and hide key messages accordion
-                    gr.update(visible=False),  # Hide entire key messages group container
-                    gr.update(visible=False),  # Hide generate button group
+                    gr.update(open=False, visible=False),  # Hide key messages accordion
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
                     "",  # Clear current_think state
-                    api_unavailable_status_html  # Show API unavailable status
+                    api_unavailable_status_html,  # Show API unavailable status
+                    gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button
                 )
                 return
 
@@ -3571,14 +4102,13 @@ Key Messages to Include:
                     gr.update(visible=False),  # Hide thinking accordion
                     gr.update(open=False, visible=False),  # Hide and close draft accordion
                     gr.update(open=False, visible=False),  # Close and hide original accordion
-                    gr.update(open=False, visible=False),   # Close and hide key messages accordion
-                    gr.update(visible=False),  # Hide entire key messages group container
-                    gr.update(visible=False),  # Hide generate button group
+                    gr.update(open=False, visible=False),  # Hide key messages accordion
                     "",  # Clear thinking content
                     gr.update(visible=False, value=None),  # Hide download file
                     "",  # Clear current_reply state
                     "",  # Clear current_think state
-                    processing_error_status_html  # Show processing error status
+                    processing_error_status_html,  # Show processing error status
+                    gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button
                 )
                 return
 
@@ -3590,11 +4120,11 @@ Key Messages to Include:
             # Initialize streaming - open draft accordion and show generation status
             full_response = ""
 
-            # Initial draft area - pure content placeholder, no status messages
-            initial_draft_status = """
+            # Initial draft area - pure content placeholder with bouncing dots animation
+            initial_draft_status = f"""
             <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #e5e7eb;'>
                 <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #9ca3af; text-align: center; padding: 40px 20px; font-size: 11pt;'>
-                    <div style='font-size: 1.1em;'>Generating your email response...</div>
+                    {create_bouncing_dots_html("Generating your email response")}
                 </div>
             </div>
             """
@@ -3611,17 +4141,17 @@ Key Messages to Include:
                 gr.update(open=True, visible=True),  # Make draft accordion visible and open to show generation
                 gr.update(open=True, visible=True),  # Make original email accordion visible and open
                 gr.update(open=True, visible=True),  # Make key messages accordion visible and open
-                gr.update(visible=True),  # Make entire key messages group container visible
-                gr.update(visible=True),  # Keep generate button group visible
                 "",                             # Clear thinking content initially
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                             # Clear current_reply state
                 "",                             # Clear current_think state
-                generating_status_html          # Show generating status
+                generating_status_html,         # Show generating status
+                gr.update(interactive=False, value="⏳ Generating...")  # Disable button and show generating text
             )
 
-            # Stream the response using the current backend
-            for chunk, done in current_backend.stream_response(prompt, model):
+            # Stream the response using a healthy backend (with automatic fallback)
+            healthy_backend = backend_manager.get_healthy_backend()
+            for chunk, done in healthy_backend.stream_response(prompt, model):
                 full_response += chunk
 
                 if not done:
@@ -3631,21 +4161,23 @@ Key Messages to Include:
                     # During streaming: show real-time content in draft area - pure content only
                     if main_reply.strip():
                         # Show actual streaming content in draft area - clean, no status headers
+                        # Use direct paragraph formatting to avoid double-wrapping
+                        formatted_content = format_reply_content_simple(main_reply)
                         draft_content = f"""
                         <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 2px solid #f97316;'>
-                            <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #374151; font-size: 11pt;'>
-                                {format_reply_content(main_reply)}
+                            <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.0; color: #374151; font-size: 11pt;'>
+                                {formatted_content}
                             </div>
                         </div>
                         """
 
 
                     else:
-                        # Still processing - show clean loading state
-                        draft_content = """
+                        # Still processing - show clean loading state with bouncing dots
+                        draft_content = f"""
                         <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 1px solid #e5e7eb;'>
                             <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #9ca3af; text-align: center; padding: 40px 20px; font-size: 11pt;'>
-                                <div style='font-size: 1.1em;'>Processing your request...</div>
+                                {create_bouncing_dots_html("Processing your request")}
                             </div>
                         </div>
                         """
@@ -3670,23 +4202,24 @@ Key Messages to Include:
                         gr.update(open=True, visible=True), # Keep draft accordion visible and open during streaming
                         gr.update(open=True, visible=True), # Keep original email accordion visible and open
                         gr.update(open=True, visible=True), # Keep key messages accordion visible and open
-                        gr.update(visible=True), # Keep entire key messages group container visible
-                        gr.update(visible=True), # Keep generate button group visible
                         think_display,                      # Show thinking content if available
                         gr.update(visible=False, value=None),  # Hide download file during generation
                         main_reply,                         # Update current_reply state
                         think_content or "",                # Update current_think state
-                        streaming_status_html               # Show streaming status with hints
+                        streaming_status_html,              # Show streaming status with hints
+                        gr.update(interactive=False, value="⏳ Generating...")  # Keep button disabled during streaming
                     )
                 else:
                     # Final response - show complete draft in draft area, keep original email in bottom section
                     main_reply, think_content = extract_and_separate_think_content(full_response)
 
                     # Format the final draft for the draft preview area - pure content only
+                    # Use direct paragraph formatting to avoid double-wrapping
+                    formatted_content = format_reply_content_simple(main_reply)
                     final_draft_content = f"""
                     <div style='padding: 20px; background: white; border-radius: 8px; margin: 20px; border: 2px solid #f97316;'>
-                        <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.6; color: #374151; font-size: 11pt;'>
-                            {format_reply_content(main_reply)}
+                        <div style='font-family: "Microsoft Sans Serif", sans-serif; line-height: 1.0; color: #374151; font-size: 11pt;'>
+                            {formatted_content}
                         </div>
                     </div>
                     """
@@ -3713,13 +4246,12 @@ Key Messages to Include:
                         gr.update(open=True, visible=True), # Keep draft accordion visible and open to show final result
                         gr.update(open=True, visible=True), # Keep original email accordion visible and open
                         gr.update(open=True, visible=True), # Keep key messages accordion visible and open
-                        gr.update(visible=True), # Keep entire key messages group container visible
-                        gr.update(visible=True), # Keep generate button group visible
                         think_display,                      # Show thinking content if available
                         download_file_update,               # Show download file
                         main_reply,                         # Update current_reply state
                         think_content or "",                # Update current_think state
-                        completion_status_html              # Show completion status
+                        completion_status_html,             # Show completion status
+                        gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button when complete
                     )
                     return
             
@@ -3746,18 +4278,17 @@ Key Messages to Include:
                 gr.update(visible=False),           # Hide thinking accordion
                 gr.update(open=False, visible=False),  # Hide and close draft accordion
                 gr.update(open=False, visible=False),  # Close and hide original accordion
-                gr.update(open=False, visible=False),  # Close and hide key messages accordion
-                gr.update(visible=False),  # Hide entire key messages group container
-                gr.update(visible=False),  # Hide generate button group
+                gr.update(open=False, visible=False),  # Hide key messages accordion
                 "",                                 # Clear thinking content
                 gr.update(visible=False, value=None),  # Hide download file
                 "",                                 # Clear current_reply state
                 "",                                 # Clear current_think state
-                error_generation_status_html        # Show error status
+                error_generation_status_html,       # Show error status
+                gr.update(interactive=True, value="🚀 Generate Reply")  # Re-enable button on error
             )
 
     # Event handlers - Updated for new component order: Upload → Thinking → Draft → Original
-    file_input.change(extract_and_display_email, inputs=file_input, outputs=[file_input, original_email_display, upload_accordion, original_accordion, key_messages_accordion, key_messages_group, generate_button_group, current_email_info, status_instructions])
+    file_input.change(extract_and_display_email, inputs=file_input, outputs=[file_input, original_email_display, upload_accordion, original_accordion, key_messages_accordion, current_email_info, status_instructions])
     file_input.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
     key_messages.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
     model_selector.change(validate_inputs, inputs=[file_input, key_messages, model_selector], outputs=generate_btn)
@@ -3770,15 +4301,24 @@ Key Messages to Include:
     # AI instructions text area change handler for saving custom instructions
     ai_instructions.change(save_custom_instructions_on_change, inputs=ai_instructions, outputs=restore_feedback)
 
-    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit], outputs=[file_input, draft_preview, original_email_display, think_accordion, draft_accordion, original_accordion, key_messages_accordion, key_messages_group, generate_button_group, think_output, download_file, current_reply, current_think, status_instructions])
+    # Backend selector change handler
+    backend_selector.change(on_backend_change, inputs=[backend_selector], outputs=[model_selector])
+
+    generate_btn.click(on_generate_stream, inputs=[file_input, key_messages, model_selector, user_name, user_email, ai_instructions, email_token_limit], outputs=[file_input, draft_preview, original_email_display, think_accordion, draft_accordion, original_accordion, key_messages_accordion, think_output, download_button, current_reply, current_think, status_instructions, generate_btn])
 
     # Preference persistence using BrowserState - reliable localStorage alternative
     user_name.change(save_user_name, inputs=[user_name, preferences_state], outputs=preferences_state)
     user_email.change(save_user_email, inputs=[user_email, preferences_state], outputs=preferences_state)
     ai_instructions.change(save_ai_instructions, inputs=[ai_instructions, preferences_state], outputs=preferences_state)
 
+
+
     # Load preferences on startup
-    demo.load(load_preferences_on_startup, inputs=preferences_state, outputs=[user_name, user_email, ai_instructions])
+    demo.load(
+        load_preferences_on_startup,
+        inputs=preferences_state,
+        outputs=[user_name, user_email, ai_instructions]
+    )
 
 if __name__ == "__main__":
     # Check if running on Hugging Face Spaces
