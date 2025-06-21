@@ -2503,8 +2503,8 @@ def format_complete_email_thread_preview(reply_text, original_email_info, user_e
         # Format To recipient (original sender) with mailto link
         to_display = format_email_links([original_sender]) if original_sender != 'Unknown' else 'Unknown'
 
-        # Create threaded content exactly as it appears in the download
-        threaded_html, _ = create_threaded_email_content(reply_text, original_email_info)
+        # Create threaded content for preview (use theme-aware colors)
+        threaded_html, _ = create_threaded_email_content(reply_text, original_email_info, for_email_client=False)
 
         # Use the properly formatted threaded_html content from create_threaded_email_content
         # This ensures proper HTML rendering like Stage 2
@@ -2548,8 +2548,15 @@ def format_complete_email_thread_preview(reply_text, original_email_info, user_e
         print(f"Error creating email thread preview: {e}")
         return format_reply_content(reply_text)
 
-def create_threaded_email_content(reply_text, original_email_info):
-    """Create a complete threaded email with reply and original content"""
+def create_threaded_email_content(reply_text, original_email_info, for_email_client=False):
+    """Create a complete threaded email with reply and original content
+
+    Args:
+        reply_text: The reply content
+        original_email_info: Original email information
+        for_email_client: If True, use hardcoded colors for email client compatibility.
+                         If False, use CSS variables for theme-aware preview.
+    """
     try:
         from bs4 import BeautifulSoup
 
@@ -2580,6 +2587,9 @@ def create_threaded_email_content(reply_text, original_email_info):
         # Join paragraphs with single line breaks for proper Outlook-style spacing
         reply_plain_text = '\n'.join(formatted_paragraphs)
 
+        # Determine color based on context (define early so it's available throughout the function)
+        text_color = "#000000" if for_email_client else "var(--text-primary)"
+
         # Get original email details with complete content preservation
         original_sender = original_email_info.get('sender', 'Unknown')
         original_date = standardize_date_format(original_email_info.get('date', 'Unknown'))
@@ -2590,7 +2600,7 @@ def create_threaded_email_content(reply_text, original_email_info):
         cc_recipients = original_email_info.get('cc_recipients', [])
 
         # Use HTML body if available for complete content preservation
-        if original_html_body:
+        if original_html_body and original_html_body.strip():
             # Clean up HTML for email threading while preserving all content
             try:
                 # Try lxml parser first for better performance
@@ -2604,11 +2614,45 @@ def create_threaded_email_content(reply_text, original_email_info):
             for script in soup.find_all('script'):
                 script.decompose()
 
-            # Preserve all other HTML elements including images, tables, formatting
-            original_body_for_threading = str(soup)
+            # Apply Outlook-compatible styling to all paragraphs in original content
+            for p in soup.find_all('p'):
+                p['style'] = f'margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt; color: {text_color};'
+
+            # Apply Outlook-compatible styling to lists in original content
+            for ul in soup.find_all('ul'):
+                ul['style'] = 'margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;'
+
+            for ol in soup.find_all('ol'):
+                ol['style'] = 'margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;'
+
+            for li in soup.find_all('li'):
+                li['style'] = f'margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt; color: {text_color};'
+
+            # Get the body content if it exists, otherwise use the entire soup
+            body_content = soup.find('body')
+            if body_content:
+                original_body_for_threading = str(body_content.decode_contents())
+            else:
+                # Preserve all other HTML elements including images, tables, formatting
+                original_body_for_threading = str(soup)
+
+            # If the result is empty or just whitespace, fall back to plain text
+            if not original_body_for_threading.strip():
+                original_body_for_threading = original_body.replace('\n', '<br>')
         else:
-            # Fallback to plain text with basic HTML formatting
-            original_body_for_threading = original_body.replace('\n', '<br>')
+            # Fallback to plain text with basic HTML formatting and proper styling
+            if original_body:
+                # Convert plain text to HTML with Outlook-compatible formatting
+                text_lines = original_body.split('\n')
+                formatted_lines = []
+                for line in text_lines:
+                    if line.strip():
+                        formatted_lines.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt; color: {text_color};">{line}</p>')
+                    else:
+                        formatted_lines.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p>')
+                original_body_for_threading = ''.join(formatted_lines)
+            else:
+                original_body_for_threading = f'<p style="margin: 0; padding: 0; line-height: 1.0; font-family: Calibri, sans-serif; font-size: 11pt; color: {text_color};"><em>No content</em></p>'
 
         # Format recipients for display (use comma separation like Outlook)
         to_display = ', '.join(to_recipients) if to_recipients else ''
@@ -2650,11 +2694,13 @@ def create_threaded_email_content(reply_text, original_email_info):
             formatted_reply_html = formatted_reply_html.replace('<li>', '<li style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt;">')
 
             # Ensure all paragraphs have consistent Outlook-compatible styling (no bottom margin)
-            formatted_reply_html = re.sub(r'<p(?![^>]*style=)', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;"', formatted_reply_html)
-            formatted_reply_html = re.sub(r'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1\.0;"', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;"', formatted_reply_html)
+            formatted_reply_html = re.sub(r'<p(?![^>]*style=)', f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: {text_color};"', formatted_reply_html)
+            formatted_reply_html = re.sub(r'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1\.0;"', f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: {text_color};"', formatted_reply_html)
 
-            # Insert empty paragraphs between content paragraphs for Outlook-compatible spacing
-            formatted_reply_html = re.sub(r'</p>\s*<p', '</p><p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p><p', formatted_reply_html)
+            # Insert empty paragraphs between content paragraphs for Outlook-compatible spacing (only if not already present)
+            # Check if empty paragraphs are already present to avoid double-spacing
+            if '>&nbsp;</p>' not in formatted_reply_html:
+                formatted_reply_html = re.sub(r'</p>\s*<p', '</p><p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p><p', formatted_reply_html)
 
         else:
             # Plain text - convert to HTML while preserving line breaks and structure using Outlook-compatible spacing
@@ -2681,7 +2727,7 @@ def create_threaded_email_content(reply_text, original_email_info):
                             formatted_paragraphs.append(f'<ul style="margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;">{"".join(list_items)}</ul>')
                     else:
                         # Regular paragraph with Microsoft Sans Serif for AI-generated content (no bottom margin)
-                        formatted_paragraphs.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">{para_formatted}</p>')
+                        formatted_paragraphs.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: {text_color};">{para_formatted}</p>')
 
                     # Add empty paragraph for spacing between content paragraphs (except for the last one)
                     if i < len([p for p in paragraphs if p.strip()]) - 1:
@@ -2689,29 +2735,32 @@ def create_threaded_email_content(reply_text, original_email_info):
 
             formatted_reply_html = ''.join(formatted_paragraphs)
 
+        # Determine colors and border based on context
+        border_color = "#E1E1E1" if for_email_client else "var(--border-light)"
+
         # Create threaded content with Microsoft Sans Serif for AI reply using tight Outlook-compatible spacing (like Stage 2)
-        threaded_html = f"""<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
+        threaded_html = f"""<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: {text_color};">
 {formatted_reply_html}
 </div>
-<div style="margin-top: 16px; border-top: 1px solid #E1E1E1; padding-top: 8px; font-family: Calibri, Arial, sans-serif;">
-<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>From:</strong> {original_sender}</p>
-<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Sent:</strong> {original_date}</p>"""
+<div style="margin-top: 16px; border-top: 1px solid {border_color}; padding-top: 8px; font-family: Calibri, Arial, sans-serif;">
+<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: {text_color}; line-height: 1.0;"><strong>From:</strong> {original_sender}</p>
+<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: {text_color}; line-height: 1.0;"><strong>Sent:</strong> {original_date}</p>"""
 
         if to_recipients:
-            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>To:</strong> {to_display}</p>'
+            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: {text_color}; line-height: 1.0;"><strong>To:</strong> {to_display}</p>'
 
         if cc_recipients:
-            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Cc:</strong> {cc_display}</p>'
+            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: {text_color}; line-height: 1.0;"><strong>Cc:</strong> {cc_display}</p>'
 
         # Add subject line to match Outlook format
-        threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Subject:</strong> {original_subject}</p>'
+        threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: {text_color}; line-height: 1.0;"><strong>Subject:</strong> {original_subject}</p>'
 
         # Add blank line after Subject (matching Outlook format)
-        threaded_html += '<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;">&nbsp;</p>'
+        threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: {text_color}; line-height: 1.0;">&nbsp;</p>'
 
         # Add original email body content with Calibri font for authentic Outlook look
         threaded_html += f"""
-<div style="margin-top: 0px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; color: #000000;">
+<div style="margin-top: 0px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; color: {text_color};">
 {original_body_for_threading}
 </div>
 </div>"""
@@ -2748,8 +2797,8 @@ def create_msg_file(reply_text, original_email_info, output_path, user_email="",
     try:
         from datetime import datetime
 
-        # Create threaded email content
-        threaded_html, threaded_plain = create_threaded_email_content(reply_text, original_email_info)
+        # Create threaded email content for email client (use hardcoded colors)
+        threaded_html, threaded_plain = create_threaded_email_content(reply_text, original_email_info, for_email_client=True)
 
         # Get original email info
         original_sender = original_email_info.get('sender', 'Unknown')
