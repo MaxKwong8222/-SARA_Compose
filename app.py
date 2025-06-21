@@ -147,9 +147,8 @@ def fetch_poe_models():
             return []
 
         # For POE, we'll use a simplified validation approach to avoid async generator cleanup issues
-        # Since POE doesn't have a simple "list models" endpoint like OpenRouter, and the test calls
-        # can cause async generator cleanup warnings, we'll do a basic API key format validation
-        # and assume our static model list is valid if the API key is properly configured
+        # Since POE test calls can cause async generator cleanup warnings, we'll do a basic API key
+        # format validation and assume our static model list is valid if the API key is properly configured
 
         # Basic API key validation - check if it's not empty and has reasonable format
         if POE_API_KEY and len(POE_API_KEY.strip()) > 10:
@@ -492,38 +491,13 @@ def ai_generation_worker(result_queue, prompt, model, updated_conversation_histo
 
 
 
-def create_bouncing_dots_html(text="Processing", model=None, backend_type=None):
-    """Create bouncing dots loading animation HTML with optional model and backend information"""
+def create_bouncing_dots_html(text="Processing", model=None):
+    """Create bouncing dots loading animation HTML with optional model information"""
 
-    # Create detailed text with model and backend info if provided
-    if model and backend_type:
-        # Get provider display name
-        provider_name = "POE" if backend_type == "poe" else "OpenRouter"
-
-        # Format model name for display
-        if backend_type == "poe":
-            model_display = model  # POE models are already clean (e.g., "GPT-4o")
-        else:
-            # OpenRouter models need formatting (e.g., "deepseek/deepseek-r1-distill-qwen-32b:free" -> "DeepSeek R1 Distill")
-            if "deepseek" in model.lower():
-                if "r1-distill" in model.lower():
-                    model_display = "DeepSeek R1 Distill"
-                else:
-                    model_display = "DeepSeek"
-            elif "qwen" in model.lower():
-                if "qwen3-32b" in model.lower():
-                    model_display = "Qwen 3 32B"
-                elif "qwen3-30b" in model.lower():
-                    model_display = "Qwen 3 30B"
-                else:
-                    model_display = "Qwen"
-            elif "gemma" in model.lower():
-                model_display = "Gemma 3 27B"
-            else:
-                # Fallback: use the model name as-is
-                model_display = model
-
-        detailed_text = f"{text} using {model_display} via {provider_name}"
+    # Create detailed text with model info if provided
+    if model:
+        # POE models are already clean (e.g., "GPT-4o")
+        detailed_text = f"{text} using {model} via POE"
     else:
         detailed_text = text
 
@@ -538,37 +512,13 @@ def create_bouncing_dots_html(text="Processing", model=None, backend_type=None):
     </div>
     """
 
-def create_loading_overlay_html(text="Processing", model=None, backend_type=None, background_content=""):
+def create_loading_overlay_html(text="Processing", model=None, background_content=""):
     """Create loading overlay that preserves background content while showing loading message"""
 
-    # Create detailed text with model and backend info if provided
-    if model and backend_type:
-        # Get provider display name
-        provider_name = "POE" if backend_type == "poe" else "OpenRouter"
-
-        # Format model name for display
-        if backend_type == "poe":
-            model_display = model  # POE models are already clean (e.g., "GPT-4o")
-        else:
-            # OpenRouter models need formatting
-            if "deepseek" in model.lower():
-                if "r1-distill" in model.lower():
-                    model_display = "DeepSeek R1 Distill"
-                else:
-                    model_display = "DeepSeek"
-            elif "qwen" in model.lower():
-                if "qwen3-32b" in model.lower():
-                    model_display = "Qwen 3 32B"
-                elif "qwen3-30b" in model.lower():
-                    model_display = "Qwen 3 30B"
-                else:
-                    model_display = "Qwen"
-            elif "gemma" in model.lower():
-                model_display = "Gemma 3 27B"
-            else:
-                model_display = model
-
-        detailed_text = f"{text} using {model_display} via {provider_name}"
+    # Create detailed text with model info if provided
+    if model:
+        # POE models are already clean (e.g., "GPT-4o")
+        detailed_text = f"{text} using {model} via POE"
     else:
         detailed_text = text
 
@@ -3926,7 +3876,6 @@ Key Messages to Include:
             initial_draft_status = create_loading_overlay_html(
                 "Generating your email response",
                 model,
-                "poe",
                 ""  # No background content initially, will show placeholder
             )
 
@@ -4017,7 +3966,6 @@ Key Messages to Include:
                                 draft_content = create_loading_overlay_html(
                                     "Processing your request",
                                     model,
-                                    "poe",
                                     ""  # No background content during processing
                                 )
 
@@ -4170,7 +4118,6 @@ Key Messages to Include:
                     progress_content = create_loading_overlay_html(
                         "Connecting to AI service",
                         model,
-                        "poe",
                         ""  # No specific background content - will show placeholder
                     )
 
