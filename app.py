@@ -2927,19 +2927,19 @@ def create_status_section():
         with gr.Row():
             # Stage 1 - Upload Email
             stage1_html = gr.HTML(
-                value=get_stage_html(1, "Upload Email", "📧", "Upload your email to get started", is_active=True),
+                value=get_stage_html(1, "Upload Email", "📧", "Upload your email to begin", is_active=True),
                 elem_id="stage1-banner"
             )
 
             # Stage 2 - Add Key Messages
             stage2_html = gr.HTML(
-                value=get_stage_html(2, "Add Key Messages", "✍️", "Enter your key points and let SARA craft your reply"),
+                value=get_stage_html(2, "Add Key Messages", "✍️", "Add key points for your reply"),
                 elem_id="stage2-banner"
             )
 
             # Stage 3 - Review & Revise
             stage3_html = gr.HTML(
-                value=get_stage_html(3, "Review & Revise", "📋", "Review, revise, and download your draft when ready"),
+                value=get_stage_html(3, "Review & Revise", "📋", "Review, revise, and download"),
                 elem_id="stage3-banner"
             )
 
@@ -2963,21 +2963,21 @@ def create_status_section():
 
         # Generate updated HTML for each stage
         stage1_update = gr.update(value=get_stage_html(
-            1, "Upload Email", "📧", "Upload your email to get started",
+            1, "Upload Email", "📧", "Upload your email to begin",
             is_active=(active_stage == 1),
             is_clickable=stage1_clickable,
             is_disabled=stage1_disabled
         ))
 
         stage2_update = gr.update(value=get_stage_html(
-            2, "Add Key Messages", "✍️", "Enter your key points and let SARA craft your reply",
+            2, "Add Key Messages", "✍️", "Add key points for your reply",
             is_active=(active_stage == 2),
             is_clickable=stage2_clickable,
             is_disabled=stage2_disabled
         ))
 
         stage3_update = gr.update(value=get_stage_html(
-            3, "Review & Revise", "📋", "Review, revise, and download your draft when ready",
+            3, "Review & Revise", "📋", "Review, revise, and download",
             is_active=(active_stage == 3),
             is_clickable=stage3_clickable,
             is_disabled=stage3_disabled
