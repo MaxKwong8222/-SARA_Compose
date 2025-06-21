@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SARA Compose - Theme-Aware Encoding Warning Demo</title>
+    <style>
+        /* CSS Variables for Theme Support */
+        :root {
+            /* Light Mode Colors */
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8fafc;
+            --text-primary: #000000;
+            --text-secondary: #374151;
+            --border-light: #e5e7eb;
+            
+            /* Warning/Alert Colors - Light Mode */
+            --warning-bg: #fff3cd;
+            --warning-border: #ffeaa7;
+            --warning-text: #856404;
+            --warning-icon: #d97706;
+        }
+
+        /* Dark Mode Colors */
+        [data-theme="dark"] {
+            --bg-primary: #1f2937;
+            --bg-secondary: #111827;
+            --text-primary: #f9fafb;
+            --text-secondary: #e5e7eb;
+            --border-light: #374151;
+            
+            /* Warning/Alert Colors - Dark Mode */
+            --warning-bg: #451a03;
+            --warning-border: #92400e;
+            --warning-text: #fbbf24;
+            --warning-icon: #f59e0b;
+        }
+
+        /* Auto-detect system dark mode preference */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-primary: #1f2937;
+                --bg-secondary: #111827;
+                --text-primary: #f9fafb;
+                --text-secondary: #e5e7eb;
+                --border-light: #374151;
+                
+                /* Warning/Alert Colors - Dark Mode */
+                --warning-bg: #451a03;
+                --warning-border: #92400e;
+                --warning-text: #fbbf24;
+                --warning-icon: #f59e0b;
+            }
+        }
+
+        /* Base Styling */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #6b21a8; /* HKMA Purple */
+            margin-bottom: 20px;
+        }
+
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #6b21a8;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .theme-toggle:hover {
+            background: #581c87;
+        }
+
+        /* Warning/Alert Styling - Theme-aware */
+        .encoding-warning {
+            background: var(--warning-bg) !important;
+            border: 1px solid var(--warning-border) !important;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 16px;
+            color: var(--warning-text) !important;
+        }
+
+        .encoding-warning strong {
+            color: var(--warning-text) !important;
+        }
+
+        .encoding-warning p {
+            color: var(--warning-text) !important;
+            margin: 4px 0 0 0;
+            font-size: 0.9em;
+        }
+
+        .encoding-warning .warning-icon {
+            color: var(--warning-icon) !important;
+            font-size: 16px;
+        }
+
+        .demo-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+        }
+
+        .code-block {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <button class="theme-toggle" onclick="toggleTheme()">🌓 Toggle Theme</button>
+    
+    <div class="container">
+        <h1>🚀 SARA Compose - Theme-Aware Encoding Warning</h1>
+        
+        <div class="demo-section">
+            <h2>📧 Email Preview with Encoding Warning</h2>
+            <p>This demonstrates how the encoding warning appears in both light and dark themes:</p>
+            
+            <!-- Theme-aware encoding warning -->
+            <div class="encoding-warning">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span class="warning-icon">⚠️</span>
+                    <div>
+                        <strong>Encoding Issues Detected</strong>
+                        <p>
+                            This email contains characters that couldn't be decoded properly. The content has been processed using fallback methods, but some formatting or special characters may not display correctly.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: var(--bg-primary); border: 1px solid var(--border-light); border-radius: 4px; padding: 15px;">
+                <div style="border-bottom: 1px solid var(--border-light); padding-bottom: 10px; margin-bottom: 15px;">
+                    <strong>From:</strong> Michael KS CHENG/RD/HKMA &lt;mkscheng@hkma.gov.hk&gt;<br>
+                    <strong>Sent:</strong> Tuesday, June 3, 2025 6:26 PM<br>
+                    <strong>To:</strong> Max Kwong &lt;mwmkwong@hkma.gov.hk&gt;<br>
+                    <strong>Subject:</strong> Re: Interesting articles on Mainland China
+                </div>
+                <div>
+                    <p>This is sample email content that would appear below the encoding warning when character decoding issues are detected in MSG files.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h2>🎨 Theme Features</h2>
+            <ul>
+                <li><strong>Light Mode:</strong> Warm yellow/orange warning colors for good visibility</li>
+                <li><strong>Dark Mode:</strong> Amber/gold warning colors with proper contrast</li>
+                <li><strong>Auto-Detection:</strong> Follows system theme preference</li>
+                <li><strong>CSS Variables:</strong> No hardcoded colors, fully theme-aware</li>
+                <li><strong>HKMA Branding:</strong> Consistent with purple theme</li>
+            </ul>
+        </div>
+        
+        <div class="demo-section">
+            <h2>💻 Implementation</h2>
+            <p>The warning uses CSS variables that automatically adapt to the current theme:</p>
+            
+            <div class="code-block">
+/* Light Mode Warning Colors */
+--warning-bg: #fff3cd;
+--warning-border: #ffeaa7;
+--warning-text: #856404;
+--warning-icon: #d97706;
+
+/* Dark Mode Warning Colors */
+--warning-bg: #451a03;
+--warning-border: #92400e;
+--warning-text: #fbbf24;
+--warning-icon: #f59e0b;
+            </div>
+            
+            <p>HTML structure uses CSS classes instead of inline styles:</p>
+            
+            <div class="code-block">
+&lt;div class="encoding-warning"&gt;
+    &lt;div style="display: flex; align-items: center; gap: 8px;"&gt;
+        &lt;span class="warning-icon"&gt;⚠️&lt;/span&gt;
+        &lt;div&gt;
+            &lt;strong&gt;Encoding Issues Detected&lt;/strong&gt;
+            &lt;p&gt;Warning message...&lt;/p&gt;
+        &lt;/div&gt;
+    &lt;/div&gt;
+&lt;/div&gt;
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleTheme() {
+            const html = document.documentElement;
+            const currentTheme = html.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            html.setAttribute('data-theme', newTheme);
+        }
+
+        // Initialize theme based on system preference
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+        }
+
+        // Listen for system theme changes
+        if (window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+                if (!document.documentElement.hasAttribute('data-theme')) {
+                    document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+                }
+            });
+        }
+    </script>
+</body>
+</html>

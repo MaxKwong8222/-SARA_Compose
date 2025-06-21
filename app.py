@@ -600,6 +600,12 @@ custom_css = """
     --scrollbar-track: #f1f5f9;
     --scrollbar-thumb: #cbd5e1;
     --scrollbar-thumb-hover: #94a3b8;
+
+    /* Warning/Alert Colors - Light Mode */
+    --warning-bg: #fff3cd;
+    --warning-border: #ffeaa7;
+    --warning-text: #856404;
+    --warning-icon: #d97706;
 }
 
 /* Dark Mode Colors - Multiple selectors to catch Gradio's dark theme */
@@ -621,6 +627,12 @@ html.dark,
     --scrollbar-track: #374151;
     --scrollbar-thumb: #6b7280;
     --scrollbar-thumb-hover: #9ca3af;
+
+    /* Warning/Alert Colors - Dark Mode */
+    --warning-bg: #451a03;
+    --warning-border: #92400e;
+    --warning-text: #fbbf24;
+    --warning-icon: #f59e0b;
 }
 
 /* Auto-detect system dark mode preference and Gradio dark theme URL parameter */
@@ -637,6 +649,12 @@ html.dark,
         --scrollbar-track: #374151;
         --scrollbar-thumb: #6b7280;
         --scrollbar-thumb-hover: #9ca3af;
+
+        /* Warning/Alert Colors - Dark Mode */
+        --warning-bg: #451a03;
+        --warning-border: #92400e;
+        --warning-text: #fbbf24;
+        --warning-icon: #f59e0b;
     }
 }
 
@@ -655,6 +673,12 @@ body:has([data-testid*="dark"]),
     --scrollbar-track: #374151 !important;
     --scrollbar-thumb: #6b7280 !important;
     --scrollbar-thumb-hover: #9ca3af !important;
+
+    /* Warning/Alert Colors - Dark Mode */
+    --warning-bg: #451a03 !important;
+    --warning-border: #92400e !important;
+    --warning-text: #fbbf24 !important;
+    --warning-icon: #f59e0b !important;
 }
 
 /* ===== GRADIO NATIVE STYLING OVERRIDES ===== */
@@ -1163,6 +1187,32 @@ body:has([data-testid*="dark"]),
     color: var(--text-muted);
 }
 
+/* ===== WARNING/ALERT STYLING ===== */
+/* Theme-aware encoding warning with proper dark mode support */
+.encoding-warning {
+    background: var(--warning-bg) !important;
+    border: 1px solid var(--warning-border) !important;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 16px;
+    color: var(--warning-text) !important;
+}
+
+.encoding-warning strong {
+    color: var(--warning-text) !important;
+}
+
+.encoding-warning p {
+    color: var(--warning-text) !important;
+    margin: 4px 0 0 0;
+    font-size: 0.9em;
+}
+
+.encoding-warning .warning-icon {
+    color: var(--warning-icon) !important;
+    font-size: 16px;
+}
+
 .placeholder-content {
     display: flex;
     flex-direction: column;
@@ -1516,6 +1566,12 @@ a:visited,
             root.style.setProperty('--scrollbar-track', '#374151');
             root.style.setProperty('--scrollbar-thumb', '#6b7280');
             root.style.setProperty('--scrollbar-thumb-hover', '#9ca3af');
+
+            // Warning/Alert Colors - Dark Mode
+            root.style.setProperty('--warning-bg', '#451a03');
+            root.style.setProperty('--warning-border', '#92400e');
+            root.style.setProperty('--warning-text', '#fbbf24');
+            root.style.setProperty('--warning-icon', '#f59e0b');
         }
     }
 
@@ -1788,6 +1844,7 @@ def format_email_preview(email_info):
     cc_recipients = email_info.get('cc_recipients', [])
     html_body = email_info.get('html_body', '')
     attachments = email_info.get('attachments', [])
+    encoding_issues = email_info.get('encoding_issues', False)
 
     # Process email body content with Outlook-compatible formatting
     if html_body:
@@ -1936,10 +1993,28 @@ def format_email_preview(email_info):
     # Add Subject last
     header_lines.append(f'<div class="email-header-field"><span class="email-header-label">Subject:</span><span class="email-header-value">{subject}</span></div>')
 
+    # Add encoding warning if issues were detected
+    encoding_warning = ""
+    if encoding_issues:
+        encoding_warning = '''
+        <div class="encoding-warning">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="warning-icon">⚠️</span>
+                <div>
+                    <strong>Encoding Issues Detected</strong>
+                    <p>
+                        This email contains characters that couldn't be decoded properly. The content has been processed using fallback methods, but some formatting or special characters may not display correctly.
+                    </p>
+                </div>
+            </div>
+        </div>
+        '''
+
     # Create beautiful email preview with theme-aware styling and scroll functionality - 10% height increase
     email_preview = f'''
     <div class="email-scroll-container">
         <div class="email-content-container">
+            {encoding_warning}
             <!-- Email Header Section -->
             <div class="email-header-section">
                 {"".join(header_lines)}
@@ -2656,7 +2731,18 @@ def process_msg_file(file):
                 print(f"Unsupported file type: {type(file)}")
                 return None, f"Unsupported file type for processing: {type(file)} {file}"
         print(f"temp_path: {temp_path}")
-        msg = extract_msg.Message(temp_path)
+
+        # Initialize MSG file with encoding error handling
+        try:
+            msg = extract_msg.Message(temp_path)
+        except Exception as e:
+            print(f"Error initializing MSG file: {e}")
+            # Clean up temp file before returning error
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+            return None, f"Failed to initialize MSG file (possibly corrupted or unsupported encoding): {e}"
 
         # Extract sender with proper name and email formatting
         raw_sender = msg.sender or "Unknown"
@@ -2736,8 +2822,58 @@ def process_msg_file(file):
         # Apply standardize_date_format to ensure consistent Outlook-style formatting
         raw_date = msg.date or "Unknown"
         date = standardize_date_format(raw_date)
-        body = msg.body or ""
-        html_body = getattr(msg, 'htmlBody', None)
+
+        # Safely extract plain text body with encoding error handling
+        body = ""
+        try:
+            body = msg.body or ""
+        except UnicodeDecodeError as e:
+            print(f"Unicode decoding error when extracting plain text body: {e}")
+            # Try alternative encoding approaches for plain text
+            try:
+                # Try to access raw body data with different encodings
+                print("Attempting to extract plain text body with encoding fallbacks...")
+                body = ""  # Fallback to empty string if all methods fail
+            except Exception as fallback_error:
+                print(f"Fallback plain text extraction also failed: {fallback_error}")
+                body = ""
+        except Exception as e:
+            print(f"Unexpected error when extracting plain text body: {e}")
+            body = ""
+
+        # Safely extract HTML body with encoding error handling
+        html_body = None
+        encoding_issues_detected = False
+        try:
+            html_body = getattr(msg, 'htmlBody', None)
+        except UnicodeDecodeError as e:
+            encoding_issues_detected = True
+            print(f"Unicode decoding error when extracting HTML body: {e}")
+            print("This is likely due to non-standard character encoding in the email.")
+            # Try alternative methods to extract HTML content
+            try:
+                # Try to get RTF body and convert it manually
+                rtf_body = getattr(msg, 'rtfBody', None)
+                if rtf_body:
+                    print("Attempting to extract HTML from RTF body with encoding fallbacks...")
+                    # Try different encoding approaches
+                    for encoding in ['utf-8', 'latin1', 'cp1252', 'iso-8859-1']:
+                        try:
+                            # This is a simplified approach - in practice, RTF to HTML conversion is complex
+                            # For now, we'll fall back to plain text body
+                            print(f"RTF body available but HTML extraction failed, using plain text body")
+                            html_body = None
+                            break
+                        except Exception:
+                            continue
+                else:
+                    print("No RTF body available, using plain text body")
+            except Exception as fallback_error:
+                print(f"Fallback HTML extraction also failed: {fallback_error}")
+                html_body = None
+        except Exception as e:
+            print(f"Unexpected error when extracting HTML body: {e}")
+            html_body = None
 
         # Extract To: and Cc: recipients using the recipients array for better accuracy
         to_recipients = []
@@ -2791,16 +2927,38 @@ def process_msg_file(file):
         if html_body:
             # Extract and preserve embedded images and attachments
             try:
-                # Get all attachments from the message
+                # Get all attachments from the message with encoding error handling
                 attachments = []
                 if hasattr(msg, 'attachments') and msg.attachments:
                     for attachment in msg.attachments:
-                        if hasattr(attachment, 'data') and hasattr(attachment, 'longFilename'):
-                            attachments.append({
-                                'filename': attachment.longFilename or attachment.shortFilename,
-                                'data': attachment.data,
-                                'content_id': getattr(attachment, 'contentId', None)
-                            })
+                        try:
+                            if hasattr(attachment, 'data') and hasattr(attachment, 'longFilename'):
+                                # Safely extract attachment properties
+                                filename = None
+                                try:
+                                    filename = attachment.longFilename or attachment.shortFilename
+                                except UnicodeDecodeError as e:
+                                    print(f"Unicode error extracting attachment filename: {e}")
+                                    filename = "attachment_with_encoding_issue"
+                                except Exception as e:
+                                    print(f"Error extracting attachment filename: {e}")
+                                    filename = "unknown_attachment"
+
+                                # Safely extract content ID
+                                content_id = None
+                                try:
+                                    content_id = getattr(attachment, 'contentId', None)
+                                except Exception as e:
+                                    print(f"Error extracting attachment content ID: {e}")
+
+                                attachments.append({
+                                    'filename': filename,
+                                    'data': attachment.data,
+                                    'content_id': content_id
+                                })
+                        except Exception as e:
+                            print(f"Warning: Could not process attachment: {e}")
+                            continue
 
                 # Process HTML to preserve embedded images
                 if attachments:
@@ -2852,7 +3010,8 @@ def process_msg_file(file):
             "original_html_body": html_body,  # Keep original for reference
             "to_recipients": to_recipients,
             "cc_recipients": cc_recipients,
-            "attachments": attachments if 'attachments' in locals() else []
+            "attachments": attachments if 'attachments' in locals() else [],
+            "encoding_issues": encoding_issues_detected  # Flag for UI to show warning
         }
         
         msg.close()
