@@ -3286,7 +3286,7 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
 
     with gr.Row():
         # Left sidebar - Information sections, preferences, and settings
-        with gr.Sidebar(position="left", width=600, open=True):
+        with gr.Sidebar(position="left", width=400, open=True):
             sidebar_components = create_sidebar()
             user_name = sidebar_components['user_name']
             user_email = sidebar_components['user_email']
