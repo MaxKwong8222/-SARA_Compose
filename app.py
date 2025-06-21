@@ -2650,8 +2650,8 @@ def create_threaded_email_content(reply_text, original_email_info):
             formatted_reply_html = formatted_reply_html.replace('<li>', '<li style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt;">')
 
             # Ensure all paragraphs have consistent Outlook-compatible styling (no bottom margin)
-            formatted_reply_html = re.sub(r'<p(?![^>]*class=)', '<p class="email-paragraph"', formatted_reply_html)
-            formatted_reply_html = re.sub(r'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1\.0;"', '<p class="email-paragraph"', formatted_reply_html)
+            formatted_reply_html = re.sub(r'<p(?![^>]*style=)', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;"', formatted_reply_html)
+            formatted_reply_html = re.sub(r'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1\.0;"', '<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;"', formatted_reply_html)
 
             # Insert empty paragraphs between content paragraphs for Outlook-compatible spacing
             formatted_reply_html = re.sub(r'</p>\s*<p', '</p><p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-size: 11pt;">&nbsp;</p><p', formatted_reply_html)
@@ -2681,7 +2681,7 @@ def create_threaded_email_content(reply_text, original_email_info):
                             formatted_paragraphs.append(f'<ul style="margin: 0; padding: 0; margin-left: 18pt; line-height: 1.0;">{"".join(list_items)}</ul>')
                     else:
                         # Regular paragraph with Microsoft Sans Serif for AI-generated content (no bottom margin)
-                        formatted_paragraphs.append(f'<p class="email-paragraph">{para_formatted}</p>')
+                        formatted_paragraphs.append(f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; line-height: 1.0; font-family: \'Microsoft Sans Serif\', sans-serif; font-size: 11pt; color: #000;">{para_formatted}</p>')
 
                     # Add empty paragraph for spacing between content paragraphs (except for the last one)
                     if i < len([p for p in paragraphs if p.strip()]) - 1:
@@ -2690,28 +2690,28 @@ def create_threaded_email_content(reply_text, original_email_info):
             formatted_reply_html = ''.join(formatted_paragraphs)
 
         # Create threaded content with Microsoft Sans Serif for AI reply using tight Outlook-compatible spacing (like Stage 2)
-        threaded_html = f"""<div class="email-thread-content">
+        threaded_html = f"""<div style="font-family: 'Microsoft Sans Serif', sans-serif; font-size: 11pt; line-height: 1.0; color: #000;">
 {formatted_reply_html}
 </div>
-<div class="original-email-content">
-<p class="email-paragraph-calibri"><strong>From:</strong> {original_sender}</p>
-<p class="email-paragraph-calibri"><strong>Sent:</strong> {original_date}</p>"""
+<div style="margin-top: 16px; border-top: 1px solid #E1E1E1; padding-top: 8px; font-family: Calibri, Arial, sans-serif;">
+<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>From:</strong> {original_sender}</p>
+<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Sent:</strong> {original_date}</p>"""
 
         if to_recipients:
-            threaded_html += f'<p class="email-paragraph-calibri"><strong>To:</strong> {to_display}</p>'
+            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>To:</strong> {to_display}</p>'
 
         if cc_recipients:
-            threaded_html += f'<p class="email-paragraph-calibri"><strong>Cc:</strong> {cc_display}</p>'
+            threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Cc:</strong> {cc_display}</p>'
 
         # Add subject line to match Outlook format
-        threaded_html += f'<p class="email-paragraph-calibri"><strong>Subject:</strong> {original_subject}</p>'
+        threaded_html += f'<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;"><strong>Subject:</strong> {original_subject}</p>'
 
         # Add blank line after Subject (matching Outlook format)
-        threaded_html += '<p class="email-paragraph-calibri">&nbsp;</p>'
+        threaded_html += '<p style="margin: 0; padding: 0; margin-bottom: 0pt; font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000; line-height: 1.0;">&nbsp;</p>'
 
         # Add original email body content with Calibri font for authentic Outlook look
         threaded_html += f"""
-<div class="original-email-body">
+<div style="margin-top: 0px; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.0; color: #000000;">
 {original_body_for_threading}
 </div>
 </div>"""
