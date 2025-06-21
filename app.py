@@ -111,26 +111,12 @@ ALLOWED_EXTENSIONS = ['.msg']
 # POE API Configuration - Use environment variable for security
 POE_API_KEY = os.getenv("POE_API_KEY", "")
 
-# OpenRouter API Configuration - Use environment variable for security
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-
 # Available Models
 POE_MODELS = ["GPT-4o", "DeepSeek-R1-Distill"]
-OPENROUTER_MODELS = [
-"deepseek/deepseek-r1-distill-qwen-32b:free",
-"qwen/qwen3-32b:free",
-"qwen/qwen3-30b-a3b:free",
-"google/gemma-3-27b-it:free"
-]
 
 # Model validation cache settings
 MODEL_CACHE_DURATION = 300 # 5 minutes in seconds
 model_validation_cache = {
-"openrouter": {
-"models": [],
-"last_updated": 0,
-"is_valid": False
-},
 "poe": {
 "models": [],
 "last_updated": 0,
@@ -150,73 +136,8 @@ DEFAULT_PARSER_CHOICE = "Auto (lxml with html.parser fallback)"
 current_parser_preference = DEFAULT_PARSER_CHOICE
 
 # Model validation functions
-def fetch_openrouter_models():
-    """Fetch available models from OpenRouter API"""
-    try:
-        import requests
 
-        if not OPENROUTER_API_KEY:
-            print("OpenRouter API key not configured")
-            return []
 
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        response = requests.get(
-            "https://openrouter.ai/api/v1/models",
-            headers=headers,
-            timeout=10
-        )
-
-        if response.status_code == 200:
-            models_data = response.json()
-            available_models = []
-
-            # Extract model IDs from the response
-            for model in models_data.get('data', []):
-                model_id = model.get('id', '')
-                if model_id:
-                    available_models.append(model_id)
-
-            print(f"Fetched {len(available_models)} models from OpenRouter API")
-            return available_models
-        else:
-            print(f"Failed to fetch OpenRouter models: {response.status_code}")
-            return []
-
-    except Exception as e:
-        print(f"Error fetching OpenRouter models: {e}")
-        return []
-def validate_openrouter_models():
-    """Validate OpenRouter models and update cache"""
-    current_time = time.time()
-    cache = model_validation_cache["openrouter"]
-
-    # Check if cache is still valid
-    if (cache["is_valid"] and
-        current_time - cache["last_updated"] < MODEL_CACHE_DURATION):
-        return cache["models"]
-
-    # Fetch fresh model list
-    available_models = fetch_openrouter_models()
-
-    # Filter our preferred models to only include available ones
-    validated_models = []
-    for model in OPENROUTER_MODELS:
-        if model in available_models:
-            validated_models.append(model)
-        else:
-            print(f"Model {model} not available in OpenRouter")
-
-    # Update cache
-    cache["models"] = validated_models
-    cache["last_updated"] = current_time
-    cache["is_valid"] = len(validated_models) > 0
-
-    print(f"Validated {len(validated_models)} OpenRouter models")
-    return validated_models
 
 def fetch_poe_models():
     """Fetch available models from POE API"""
@@ -268,65 +189,32 @@ def validate_poe_models():
     print(f"Validated {len(available_models)} POE models")
     return available_models
 
-def get_default_model(backend_type):
-    """Get default model for backend type"""
-    if backend_type == "openrouter":
-        return "deepseek/deepseek-r1-distill-qwen-32b:free"
-    else: # poe
-        return "GPT-4o"
+def get_default_model():
+    """Get default model for POE"""
+    return "GPT-4o"
 
-def validate_model_selection(backend_type, model):
-    """Validate that a model is available for the given backend"""
-    if backend_type == "poe":
-        available_models = validate_poe_models()
-        return model in available_models
-    elif backend_type == "openrouter":
-        available_models = validate_openrouter_models()
-        return model in available_models
-    return False
+def validate_model_selection(model):
+    """Validate that a model is available for POE"""
+    available_models = validate_poe_models()
+    return model in available_models
 
-def get_fallback_model(backend_type, unavailable_model):
+def get_fallback_model(unavailable_model):
     """Get a fallback model when the selected model becomes unavailable"""
-    print(f"Model {unavailable_model} is no longer available for {backend_type}")
+    print(f"Model {unavailable_model} is no longer available for POE")
 
-    if backend_type == "openrouter":
-        available_models = validate_openrouter_models()
-        if available_models:
-            # Try to return the default model if available
-            default_model = get_default_model(backend_type)
-            if default_model in available_models:
-                return default_model
-            # Otherwise return the first available model
-            return available_models[0]
-    elif backend_type == "poe":
-        available_models = validate_poe_models()
-        if available_models:
-            # Try to return the default model if available
-            default_model = get_default_model(backend_type)
-            if default_model in available_models:
-                return default_model
-            # Otherwise return the first available model
-            return available_models[0]
+    available_models = validate_poe_models()
+    if available_models:
+        # Try to return the default model if available
+        default_model = get_default_model()
+        if default_model in available_models:
+            return default_model
+        # Otherwise return the first available model
+        return available_models[0]
 
     return None
 def initialize_model_validation():
     """Initialize model validation on startup"""
     print("Initializing model validation...")
-
-    # Pre-warm the OpenRouter model cache if API key is available
-    if OPENROUTER_API_KEY:
-        try:
-            # Run validation in background thread to avoid blocking startup
-            def background_openrouter_validation():
-                validate_openrouter_models()
-
-            validation_thread = threading.Thread(target=background_openrouter_validation, daemon=True)
-            validation_thread.start()
-            print("Started background OpenRouter model validation")
-        except Exception as e:
-            print(f"Failed to start background OpenRouter model validation: {e}")
-    else:
-        print("OpenRouter API key not configured, skipping OpenRouter model validation")
 
     # Pre-warm the POE model cache if API key is available
     if POE_API_KEY:
@@ -527,200 +415,52 @@ class POEBackend(AIBackend):
             return
 
 
-class OpenRouterBackend(AIBackend):
-    """OpenRouter API backend implementation"""
 
-    def __init__(self):
-        self.api_key = OPENROUTER_API_KEY
-        self.base_url = "https://openrouter.ai/api/v1"
 
-    def is_healthy(self) -> bool:
-        """Check if OpenRouter API is available"""
-        return bool(self.api_key)
-
-    def stream_response(self, prompt: str, model: str, conversation_history: list = None) -> Iterator[Tuple[str, bool]]:
-        """Stream response from OpenRouter API"""
-        try:
-            if not self.api_key:
-                yield "OpenRouter API key not configured", True
-                return
-
-            # Validate model availability dynamically
-            available_models = validate_openrouter_models()
-            if model not in available_models:
-                yield f"Model {model} not available in OpenRouter", True
-                return
-
-            # Import requests here to avoid dependency issues if not installed
-            import requests
-            import json
-
-            # Prepare headers
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://sara-compose.local",
-                "X-Title": "SARA Compose"
-            }
-
-            # Prepare messages - use conversation history if provided, otherwise single prompt
-            if conversation_history:
-                messages = conversation_history
-            else:
-                messages = [{"role": "user", "content": prompt}]
-
-            # Prepare request payload
-            payload = {
-                "model": model,
-                "messages": messages,
-                "stream": True,
-                "temperature": 0.3,
-                "max_tokens": 2000
-            }
-
-            # Make streaming request
-            url = f"{self.base_url}/chat/completions"
-
-            with requests.post(url, headers=headers, json=payload, stream=True, timeout=30) as response:
-                if response.status_code != 200:
-                    yield f"OpenRouter API Error: {response.status_code} - {response.text}", True
-                    return
-
-                buffer = ""
-                for chunk in response.iter_content(chunk_size=1024, decode_unicode=True):
-                    if not chunk:
-                        continue
-
-                    buffer += chunk
-
-                    # Process complete lines
-                    while '\n' in buffer:
-                        line_end = buffer.find('\n')
-                        line = buffer[:line_end].strip()
-                        buffer = buffer[line_end + 1:]
-
-                        # Skip empty lines and comments
-                        if not line or line.startswith(':'):
-                            continue
-
-                        # Process SSE data lines
-                        if line.startswith('data: '):
-                            data = line[6:]
-
-                            # Check for stream end
-                            if data == '[DONE]':
-                                yield "", True
-                                return
-
-                            try:
-                                # Parse JSON data
-                                data_obj = json.loads(data)
-
-                                # Extract content from delta
-                                if 'choices' in data_obj and len(data_obj['choices']) > 0:
-                                    choice = data_obj['choices'][0]
-                                    if 'delta' in choice and 'content' in choice['delta']:
-                                        content = choice['delta']['content']
-                                        if content:
-                                            yield content, False
-
-                            except json.JSONDecodeError:
-                                # Skip malformed JSON
-                                continue
-
-                # Signal completion if we exit the loop
-                yield "", True
-
-        except ImportError:
-            yield "OpenRouter backend requires 'requests' package. Please install it.", True
-        except Exception as e:
-            yield f"OpenRouter Backend Error: {str(e)}", True
-            return
-
-# Enhanced backend manager supporting multiple backends
+# Simplified backend manager for POE only
 class BackendManager:
-    """Manages multiple AI backends (POE and OpenRouter)"""
+    """Manages POE AI backend"""
 
     def __init__(self):
         self.poe_backend = POEBackend()
-        self.openrouter_backend = OpenRouterBackend()
-        self.current_backend_type = "poe" # Default to POE (GPT-4o priority)
-
-    def set_backend(self, backend_type: str):
-        """Set the current backend type"""
-        if backend_type in ["poe", "openrouter"]:
-            self.current_backend_type = backend_type
-        else:
-            raise ValueError(f"Unknown backend type: {backend_type}")
 
     def get_current_backend(self) -> AIBackend:
-        """Get the current backend instance with fallback logic"""
-        if self.current_backend_type == "poe":
-            return self.poe_backend
-        elif self.current_backend_type == "openrouter":
-            return self.openrouter_backend
-        else:
-            return self.poe_backend # Fallback to POE
+        """Get the POE backend"""
+        return self.poe_backend
 
     def get_healthy_backend(self) -> AIBackend:
-        """Get a healthy backend, with automatic fallback if current is unhealthy"""
-        current_backend = self.get_current_backend()
-
-        # If current backend is healthy, use it
-        if current_backend.is_healthy():
-            return current_backend
-
-        # Try fallback backends
-        if self.current_backend_type != "poe" and self.poe_backend.is_healthy():
-            print(f"Warning: {self.current_backend_type} backend unhealthy, falling back to POE")
+        """Get the POE backend if healthy"""
+        if self.poe_backend.is_healthy():
             return self.poe_backend
-        elif self.current_backend_type != "openrouter" and self.openrouter_backend.is_healthy():
-            print(f"Warning: {self.current_backend_type} backend unhealthy, falling back to OpenRouter")
-            return self.openrouter_backend
 
-        # If no backends are healthy, return current (will show error to user)
-        print("Warning: No healthy backends available")
-        return current_backend
+        # If POE is not healthy, return it anyway (will show error)
+        print("Warning: POE backend is not healthy")
+        return self.poe_backend
 
     def is_backend_healthy(self) -> bool:
-        """Check if current backend is healthy"""
-        return self.get_current_backend().is_healthy()
+        """Check if POE backend is healthy"""
+        return self.poe_backend.is_healthy()
 
     def is_any_backend_healthy(self) -> bool:
-        """Check if any backend is healthy"""
-        return self.poe_backend.is_healthy() or self.openrouter_backend.is_healthy()
+        """Check if POE backend is healthy"""
+        return self.poe_backend.is_healthy()
 
     def get_available_models(self) -> list:
-        """Get available models for current backend with dynamic validation"""
-        if self.current_backend_type == "poe":
-            # Return validated models from cache/API
-            validated_models = validate_poe_models()
-            if not validated_models:
-                print("No validated POE models available, falling back to static list")
-                return POE_MODELS # Fallback to static list if validation fails
-            return validated_models
-        elif self.current_backend_type == "openrouter":
-            # Return validated models from cache/API
-            validated_models = validate_openrouter_models()
-            if not validated_models:
-                print("No validated OpenRouter models available, falling back to static list")
-                return OPENROUTER_MODELS # Fallback to static list if validation fails
-            return validated_models
-        else:
-            return POE_MODELS # Fallback
+        """Get available models for POE"""
+        validated_models = validate_poe_models()
+        if not validated_models:
+            print("No validated POE models available, falling back to static list")
+            return POE_MODELS # Fallback to static list if validation fails
+        return validated_models
 
     def get_backend_status(self) -> dict:
-        """Get status of all backends"""
+        """Get status of POE backend"""
         return {
             "poe": {
                 "healthy": self.poe_backend.is_healthy(),
                 "models": POE_MODELS
             },
-            "openrouter": {
-                "healthy": self.openrouter_backend.is_healthy(),
-                "models": OPENROUTER_MODELS
-            },
-            "current": self.current_backend_type
+            "current": "poe"
         }
 
 # Initialize backend manager
@@ -1930,7 +1670,6 @@ a:visited,
 print("Initializing AI backends...")
 backend_status = backend_manager.get_backend_status()
 print(f"POE backend healthy: {backend_status['poe']['healthy']}")
-print(f"OpenRouter backend healthy: {backend_status['openrouter']['healthy']}")
 print(f"Current backend: {backend_status['current']}")
 print("Backend initialization complete.")
 
@@ -3484,24 +3223,15 @@ def create_sidebar():
     # Development Settings Section
     with gr.Accordion("⚙️ Development Settings", open=False):
         with gr.Group():
-            gr.HTML("<h4 class='sidebar-section-header'>AI Backend Configuration</h4>")
+            gr.HTML("<h4 class='sidebar-section-header'>AI Model Configuration</h4>")
 
-            # Backend selection
-            backend_selector = gr.Dropdown(
-                label="AI Backend",
-                choices=["poe", "openrouter"],
-                value="poe",  # Default to POE (GPT-4o priority)
-                interactive=True,
-                info="Select the AI backend provider"
-            )
-
-            # Model selection - dynamically updated based on backend
+            # Model selection - POE models only
             model_selector = gr.Dropdown(
                 label="AI Model",
                 choices=POE_MODELS,
                 value="GPT-4o",  # Default to GPT-4o
                 interactive=True,
-                info="Select the AI model for email generation"
+                info="Select the AI model for email generation (powered by POE API)"
             )
 
             email_token_limit = gr.Number(
@@ -3537,7 +3267,6 @@ def create_sidebar():
         'ai_instructions': ai_instructions,
         'restore_default_btn': restore_default_btn,
         'restore_feedback': restore_feedback,
-        'backend_selector': backend_selector,
         'model_selector': model_selector,
         'email_token_limit': email_token_limit,
         'parser_selector': parser_selector,
@@ -3614,7 +3343,6 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
             ai_instructions = sidebar_components['ai_instructions']
             restore_default_btn = sidebar_components['restore_default_btn']
             restore_feedback = sidebar_components['restore_feedback']
-            backend_selector = sidebar_components['backend_selector']
             model_selector = sidebar_components['model_selector']
             email_token_limit = sidebar_components['email_token_limit']
             parser_selector = sidebar_components['parser_selector']
@@ -3694,67 +3422,17 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
 
 
 
-    def on_backend_change(backend_type):
-        """Handle backend selection change and update model choices with validation"""
-        try:
-            # Update the backend manager
-            backend_manager.set_backend(backend_type)
 
-            # Get available models for the selected backend (with dynamic validation)
-            available_models = backend_manager.get_available_models()
 
-            if not available_models:
-                print(f"No models available for {backend_type} backend")
-                # Fallback to POE if OpenRouter has no models
-                if backend_type == "openrouter":
-                    return gr.update(
-                        choices=POE_MODELS,
-                        value="GPT-4o",
-                        info="OpenRouter models unavailable - falling back to POE API"
-                    )
-                else:
-                    return gr.update(
-                        choices=POE_MODELS,
-                        value="GPT-4o",
-                        info="No models available for selected backend"
-                    )
-
-            # Get default model and validate it's available
-            default_model = get_default_model(backend_type)
-            if default_model not in available_models:
-                # Use first available model if default is not available
-                default_model = available_models[0]
-                print(f"Default model not available, using {default_model}")
-
-            # Return updated dropdown with validated models
-            model_count = len(available_models)
-            return gr.update(
-                choices=available_models,
-                value=default_model,
-                info=f"Select the AI model for email generation (powered by {backend_type.upper()} API) - {model_count} models available"
-            )
-        except Exception as e:
-            print(f"Error changing backend: {e}")
-            # Fallback to POE
-            return gr.update(
-                choices=POE_MODELS,
-                value="GPT-4o",
-                info="Error loading models - falling back to POE API"
-            )
-
-    def validate_backend_model_compatibility(backend_type, model):
-        """Validate that the selected model is compatible with the backend using dynamic validation"""
-        return validate_model_selection(backend_type, model)
-
-    def on_model_change(backend_type, model):
+    def on_model_change(model):
         """Handle model selection change with validation and fallback"""
         try:
-            # Validate the selected model
-            if not validate_model_selection(backend_type, model):
-                print(f"Model {model} is not available for {backend_type}")
+            # Validate the selected model for POE
+            if not validate_model_selection(model):
+                print(f"Model {model} is not available for POE")
 
                 # Get fallback model
-                fallback_model = get_fallback_model(backend_type, model)
+                fallback_model = get_fallback_model(model)
                 if fallback_model:
                     print(f"Falling back to {fallback_model}")
                     return gr.update(
@@ -3762,14 +3440,14 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
                         info=f"Model {model} unavailable - switched to {fallback_model}"
                     )
                 else:
-                    print(f"No fallback model available for {backend_type}")
+                    print(f"No fallback model available for POE")
                     return gr.update(
                         info=f"Model {model} is not available"
                     )
             else:
                 # Model is valid
                 return gr.update(
-                    info=f"Model {model} is ready for use"
+                    info=f"Model {model} is ready for use (powered by POE API)"
                 )
         except Exception as e:
             print(f"Error validating model selection: {e}")
@@ -3806,19 +3484,14 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
             )
 
     def get_backend_health_info():
-        """Get detailed backend health information for UI display"""
+        """Get POE backend health information for UI display"""
         status = backend_manager.get_backend_status()
 
-        health_info = []
-        for backend_name, backend_info in status.items():
-            if backend_name == "current":
-                continue
+        poe_info = status['poe']
+        status_icon = "✅" if poe_info['healthy'] else "❌"
+        model_count = len(poe_info['models'])
 
-            status_icon = "✅" if backend_info['healthy'] else "❌"
-            model_count = len(backend_info['models'])
-            health_info.append(f"{backend_name.upper()}: {status_icon} ({model_count} models)")
-
-        return " | ".join(health_info)
+        return f"POE: {status_icon} ({model_count} models)"
 
     def load_preferences_on_startup(prefs_state):
         """Load saved preferences on application startup"""
@@ -3962,19 +3635,19 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
         return ""
 
 
-    def validate_inputs(file, key_msgs, model, backend_type="poe"):
+    def validate_inputs(file, key_msgs, model):
         """Validate inputs including model availability"""
         if not file or not key_msgs or not model:
             return gr.update(interactive=False)
 
-        # Additional validation: check if model is available for current backend
-        if not validate_model_selection(backend_type, model):
-            print(f"Model {model} not available for {backend_type} backend")
+        # Additional validation: check if model is available for POE
+        if not validate_model_selection(model):
+            print(f"Model {model} not available for POE backend")
             return gr.update(interactive=False)
 
         return gr.update(interactive=True)
 
-    def validate_revision_inputs(file, key_msgs, model, backend_type, is_revision_mode):
+    def validate_revision_inputs(file, key_msgs, model, is_revision_mode):
         """Validate inputs specifically for revision mode - button should be disabled when revision text is empty"""
         if not file or not model:
             return gr.update(interactive=False)
@@ -3988,9 +3661,9 @@ with gr.Blocks(theme=hkma_theme, css=custom_css, title="SARA Compose") as demo:
             if not key_msgs:
                 return gr.update(interactive=False)
 
-        # Additional validation: check if model is available for current backend
-        if not validate_model_selection(backend_type, model):
-            print(f"Model {model} not available for {backend_type} backend")
+        # Additional validation: check if model is available for POE
+        if not validate_model_selection(model):
+            print(f"Model {model} not available for POE backend")
             return gr.update(interactive=False)
 
         return gr.update(interactive=True)
@@ -4150,7 +3823,6 @@ Key Messages to Include:
                 # Get backend status for detailed error message
                 backend_status = backend_manager.get_backend_status()
                 poe_status = "✅ Healthy" if backend_status['poe']['healthy'] else "❌ Unavailable"
-                openrouter_status = "✅ Healthy" if backend_status['openrouter']['healthy'] else "❌ Unavailable"
 
                 yield (
                     gr.update(visible=True),   # Show upload panel for retry
@@ -4158,13 +3830,12 @@ Key Messages to Include:
                     <div class='thread-placeholder'>
                         <div class='placeholder-content'>
                             <div class='placeholder-icon'>❌</div>
-                            <h3>All AI Backends Unavailable</h3>
+                            <h3>POE AI Backend Unavailable</h3>
                             <p><strong>Backend Status:</strong></p>
                             <ul style='text-align: left; margin: 10px 0;'>
                                 <li>POE API: {poe_status}</li>
-                                <li>OpenRouter API: {openrouter_status}</li>
                             </ul>
-                            <p>Please check your API keys and try again.</p>
+                            <p>Please check your POE API key and try again.</p>
                         </div>
                     </div>
                     """,
@@ -4255,7 +3926,7 @@ Key Messages to Include:
             initial_draft_status = create_loading_overlay_html(
                 "Generating your email response",
                 model,
-                backend_manager.current_backend_type,
+                "poe",
                 ""  # No background content initially, will show placeholder
             )
 
@@ -4346,7 +4017,7 @@ Key Messages to Include:
                                 draft_content = create_loading_overlay_html(
                                     "Processing your request",
                                     model,
-                                    backend_manager.current_backend_type,
+                                    "poe",
                                     ""  # No background content during processing
                                 )
 
@@ -4499,7 +4170,7 @@ Key Messages to Include:
                     progress_content = create_loading_overlay_html(
                         "Connecting to AI service",
                         model,
-                        backend_manager.current_backend_type,
+                        "poe",
                         ""  # No specific background content - will show placeholder
                     )
 
@@ -4698,9 +4369,9 @@ Key Messages to Include:
     # Event handlers - Updated for full-width upload panel
     file_input.change(extract_and_display_email, inputs=file_input, outputs=[upload_panel, original_reference_display, original_reference_accordion, key_messages, current_email_info, stage1_html, stage2_html, stage3_html, generate_btn, current_stage, unlocked_stages])
     file_input.change(reset_conversation_state, outputs=[conversation_history, is_revision_mode, initial_key_messages])
-    file_input.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
-    key_messages.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
-    model_selector.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
+    file_input.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, is_revision_mode], outputs=generate_btn)
+    key_messages.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, is_revision_mode], outputs=generate_btn)
+    model_selector.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, is_revision_mode], outputs=generate_btn)
 
 
 
@@ -4710,11 +4381,8 @@ Key Messages to Include:
     # AI instructions text area change handler for saving custom instructions
     ai_instructions.change(save_custom_instructions_on_change, inputs=ai_instructions, outputs=restore_feedback)
 
-    # Backend selector change handler
-    backend_selector.change(on_backend_change, inputs=[backend_selector], outputs=[model_selector])
-
     # Model selector change handler for validation
-    model_selector.change(on_model_change, inputs=[backend_selector, model_selector], outputs=[model_selector])
+    model_selector.change(on_model_change, inputs=[model_selector], outputs=[model_selector])
 
     # Parser selector change handler
     parser_selector.change(on_parser_change, inputs=[parser_selector], outputs=[parser_info])
@@ -4724,7 +4392,7 @@ Key Messages to Include:
     # Update key messages field when revision mode changes
     is_revision_mode.change(clear_key_messages_for_revision, inputs=[is_revision_mode], outputs=[key_messages])
     # Update button validation when revision mode changes
-    is_revision_mode.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, backend_selector, is_revision_mode], outputs=generate_btn)
+    is_revision_mode.change(validate_revision_inputs, inputs=[file_input, key_messages, model_selector, is_revision_mode], outputs=generate_btn)
 
     # Stage navigation click handlers - Gradio-native approach
     stage1_html.click(

@@ -27,7 +27,6 @@ typing-extensions==4.14.0
 
 # HTTP client
 httpx==0.28.1
-requests==2.32.4
 
 # Template engine
 Jinja2==3.1.6
